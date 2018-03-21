@@ -63,7 +63,6 @@ def solToPaths(solutionStringList):
                         break
                     else:
                         if pathList[j][0] == pathList[j][-1] : 
-                            cyc=pathList[j][0]
                             breaker=0
                             for num,vert in enumerate(path):
                                 for num2,vert2 in enumerate(pathList[j]):
@@ -85,91 +84,105 @@ def solToPaths(solutionStringList):
                 break
     return pathList
 
-
-#print(solToPaths(["y#HA_BE","y_H_QO","y_QO_BUT","y_BUT_H", "y_BE_IC","y_IC_H","y_H_EU", "y_EU_SE","y_SE_NER","y_NER_EU","y#EU_TE","y_TE_GUT"  ]))
-#testSolToPaths(10,3)
-#number_of_timesteps=200
-tS=range(number_of_timesteps)
-tSString=[str(t) for t in tS]
-solutionValues=model.solution.get_values()
+#grab the old solution values
+solutionValues = model.solution.get_values()
 name2idx = { n : j for j, n in enumerate(model.variables.get_names()) }
 name2solutionValue = { n : solutionValues[j] for j, n in enumerate(model.variables.get_names()) }
+
+
 paths={}
 flyTime={}
 xPaths={}
-for p in Airplane:
-    print('Checking airplane ' + p)
-    print("Old Tour:")
+
+
+for p in PLANE:
+    print('Checking PLANE ' + p)
+    
+    #Print the timefree tour of the plane for debugging
+    print("Timefree Tour:")
     for key,val in y.iteritems():
         if key[2]!=p:
             continue
         valStore=solutionValues[name2idx[val]]
         if valStore > 0.5:
             print(val+" %f" %valStore)
+    
     for key,val in y_arr.iteritems():
         if key[0]!=p:
             continue
         valStore=solutionValues[name2idx[val]]
         if valStore > 0.5:
             print(val +" %f" %valStore)
+    
     for key,val in y_dep.iteritems():
         if key[0]!=p:
             continue
         valStore=solutionValues[name2idx[val]]
         if valStore > 0.5:
             print(val +" %f" %valStore)
+    
+    
+    #read the y-variables that are set for p
     yString=[]
     flyTime[p]=0
     for key,val in y.iteritems():
         if key[2]==p:
             valStore=solutionValues[name2idx[val]]
-            for k in range(10):
+            for k in range(10): #account for y variables that are not binary
                 if valStore > 0.1+k: 
                     yString+=[val]
-                    flyTime[p]+=Traveltime[key[0],key[1],key[2]]
+                    flyTime[p]+=turnover_travel_timesteps[key[0],key[1],key[2]]
                 else:
                     break
     
     
+    
+    #find the earliest time the plane could departure
     earliestDep=0
-    for ID in yDividers[Airplane[p].origin,p].ids:
+    for ID in yDividers[PLANE[p].origin,p].ids:
         if name2solutionValue["y_dep#" + p + "_" + ID] > 0.1:
-            earliestDep=max([min(yDividers[Airplane[p].origin,p].ids[ID]),0])
+            earliestDep=max([min(yDividers[PLANE[p].origin,p].ids[ID]),min_timestep])
             startIndex=(p,ID)
+    
+    #find the latest time the plane could arrive
     latestArr=0
-
-    for ID in yDividers[Airplane[p].destination,p].ids:
+    for ID in yDividers[PLANE[p].destination,p].ids:
         if name2solutionValue["y_arr#" + p + "_" + ID] > 0.1:
-            latestArr=min([max(yDividers[Airplane[p].destination,p].ids[ID]),number_of_timesteps])
+            latestArr=min([max(yDividers[PLANE[p].destination,p].ids[ID]),max_timestep])
             goalIndex=(p,ID)
 
     
-    #Check for cycles
     
+    #converts the analyzed y variables to a set of longest paths
+    #A time dependent solution can be recovered if this path can be flown in
+    #the respective time and there are no disconnected cycles.
     paths[p]=solToPaths(yString)
-    print(paths[p])
-    if len(paths[p])>1:
+
+
+    #Break the disconnected cycles
+    if len(paths[p])>1:#cycle check
         for path in paths[p]:
-            if path[0]!=Airplane[p].origin and path[0]==path[-1]:
+            if path[0]!=PLANE[p].origin and path[0]==path[-1]:#condition for a disconnected cycle
                 cycleLength=0
                 for i in range(1,len(path)):
-                    cycleLength+=Traveltime[path[i-1],path[i],p]
+                    cycleLength+=turnover_travel_timesteps[path[i-1],path[i],p]
                 prevPath=earliestDep
                 for i in range(0,len(path)):
-                    LOP=[prevPath-1+m*cycleLength for m in range(1+int(number_of_timesteps) % int(cycleLength)) if prevPath-1+m*cycleLength <= number_of_timesteps and prevPath-1+m*cycleLength>0]
+                    LOP=[prevPath-1+m*cycleLength for m in range(1+int(number_of_timesteps) % int(cycleLength)) 
+                            if prevPath-1+m*cycleLength <= number_of_timesteps and prevPath-1+m*cycleLength>0]
                     if LOP != []:
                         print("Cycle Divider added")
                         yDividers[path[i],p].addDivider(LOP,number_of_timesteps)
                         yDividers[path[i],p].addDivider([1],number_of_timesteps)
-                        for r in Request:
+                        for r in REQUEST:
                             xDividers[path[i],r,p].addDivider(LOP,number_of_timesteps)
                             xDividers[path[i],r,p].addDivider([1],number_of_timesteps)
                         #yDepDividers[p].addDivider(LOP,number_of_timesteps)
                         #yArrDividers[p].addDivider(LOP,number_of_timesteps)
                     if i < len(path)-1:
-                        prevPath+=Traveltime[path[i],path[i+1],p]
+                        prevPath+=turnover_travel_timesteps[path[i],path[i+1],p]
         break #This break is to go back to timefree                
-    while paths[p][0][0] != Airplane[p].origin:
+    while paths[p][0][0] != PLANE[p].origin:
         paths[p][0].pop(0)
         paths[p][0].append(paths[p][0][0])
         
@@ -178,205 +191,44 @@ for p in Airplane:
         for path in paths[p]:
             pathLength=0
             for i in range(len(path)-1):
-                pathLength+=Traveltime[path[i],path[i+1],p]
+                pathLength+=turnover_travel_timesteps[path[i],path[i+1],p]
                 
             prevPath=earliestDep
             for i in range(len(path)):
-                LOP=[prevPath-1+m*pathLength for m in range(int(number_of_timesteps) % int(pathLength)) if prevPath-1+m*pathLength <= number_of_timesteps and prevPath-1+m*pathLength>0]
+                LOP=[prevPath-1+m*pathLength for m in range(int(number_of_timesteps) % int(pathLength)) 
+                if prevPath-1+m*pathLength <= number_of_timesteps and prevPath-1+m*pathLength>0]
                 if LOP != []:
                     yDividers[path[i],p].addDivider(LOP,number_of_timesteps)
                     yDividers[path[i],p].addDivider([1],number_of_timesteps)
-                    for r in Request:
+                    for r in REQUEST:
                         xDividers[path[i],r,p].addDivider(LOP,number_of_timesteps)
                         xDividers[path[i],r,p].addDivider([1],number_of_timesteps)
                 if i < len(path)-1:
-                    prevPath+=Traveltime[path[i],path[i+1],p]
+                    prevPath+=turnover_travel_timesteps[path[i],path[i+1],p]
         break#This break is to go back to timefree
     
-    #continue
-    model2 = cplex.Cplex()
-    y2 = {}
-    model2.set_results_stream('reconst.rlog')
+    
+
     if paths[p] == []:
         continue
-    for i,j in Distance:
-        for t in tS:
-            if pathHasArc(paths[p][0],[i,j]):
-                y2[i,j,p,t] = "y#" + i + "_" + j + "_" + p + "_" + str(t)
-                model2.variables.add(obj = [0.0], names = [y2[i,j,p,t]], lb = [0], ub=[1.0],types = ["B"])
-            else:
-                y2[i,j,p,t] = "y#" + i + "_" + j + "_" + p + "_" + str(t)
-                model2.variables.add(obj = [0.0], names = [y2[i,j,p,t]], lb = [0],ub=[0.0], types = ["B"])
+    for i,j in TRIP:
+        if pathHasArc(paths[p][0],[i,j]):
+            pathModels[p].variables.set_upper_bounds(names = [y2[i,j,p,t] for t in tP[p]], ub = [1.0 for t in tP[p]])
+            requestModels[p].variables.set_upper_bounds(names = [y2[i,j,p,t] for t in tP[p]], ub = [1.0 for t in tP[p]])
+            fullModels[p].variables.set_upper_bounds(names = [y2[i,j,p,t] for t in tP[p]], ub = [1.0 for t in tP[p]])
+        else:
+            pathModels[p].variables.set_upper_bounds(names = [y2[i,j,p,t] for t in tP[p]], ub = [0.0 for t in tP[p]])
+            requestModels[p].variables.set_upper_bounds(names = [y2[i,j,p,t] for t in tP[p]], ub = [0.0 for t in tP[p]])
+            fullModels[p].variables.set_upper_bounds(names = [y2[i,j,p,t] for t in tP[p]], ub = [0.0 for t in tP[p]])
     
-    y_arr2 = {}
-    y_dep2 = {}
-    for t in tS:
-        y_dep2[p,t] = "y_dep#" + p + "_" + str(t)
-        model2.variables.add(names = [y_dep2[p,t]], lb = [0.0], ub = [0.0], types = ["B"])
-        y_arr2[p,t] = "y_arr#" + p + "_" + str(t)
-        model2.variables.add(names = [y_arr2[p,t]], lb = [0.0], ub = [0.0], types = ["B"])
-    
-    for key,val in y_arr.iteritems():
-        if key[0]!=p:
-            continue
-        valStore=solutionValues[name2idx[val]]
-        if valStore >0.5:
-            for t in tS:
-                model2.variables.set_upper_bounds(y_arr2[key[0],t],1.0 )
-    for key,val in y_dep.iteritems():
-        if key[0]!=p:
-            continue
-        valStore=solutionValues[name2idx[val]]
-        if valStore >0.5:
-            for t in tS:
-                model2.variables.set_upper_bounds(y_dep2[key[0],t],1.0 )   
-    """
-    ySlack = {}
-    for i,j in Distance:
-        for ID in yDividers[i,j,p].ids:
-            ySlack[i,j,p,ID] = "ySlack#" + i + "_" + j + "_" + p + "_" + ID
-            model2.variables.add(obj = [1.0], names = [ySlack[i,j,p,ID]], lb = [0.0], types = ["I"])
-    
-    y_depSlack = {}
-    
-    for ID in yDepDividers[p].ids:
-        y_depSlack[p,ID] = "y_depSlack#" + p  + "_" + ID
-        model2.variables.add(obj = [1000.0], names = [y_depSlack[p,ID]], lb = [0.0], types = ["I"])
-    
-    y_arrSlack = {}
-    
-    for ID in yArrDividers[p].ids:
-        y_arrSlack[p,ID] = "y_arrSlack#" + p  + "_" + ID
-        model2.variables.add(obj = [1000.0], names = [y_arrSlack[p,ID]], lb = [0.0], types = ["I"])
-    
-    ySlack2 = {}
-    for i,j in Distance:
-            for ID in yDividers[i,j,p].ids:
-                ySlack2[i,j,p,ID] = "ySlack2#" + i + "_" + j + "_" + p + "_" + ID
-                model2.variables.add(obj = [1.0], names = [ySlack2[i,j,p,ID]], lb = [0.0],ub=[0.0], types = ["I"])
      
-    y_depSlack2 = {}
-    
-    for ID in yDepDividers[p].ids:
-        y_depSlack2[p,ID] = "y_depSlack2#" + p  + "_" + ID
-        model2.variables.add(obj = [1.0], names = [y_depSlack2[p,ID]], lb = [0.0], types = ["I"])
-    
-    y_arrSlack2 = {}
-
-    for ID in yArrDividers[p].ids:
-        y_arrSlack2[p,ID] = "y_arrSlack2#" + p  + "_" + ID
-        model2.variables.add(obj = [1.0], names = [y_arrSlack2[p,ID]], lb = [0.0], types = ["I"])
-    """
-    
-    
-    # CONSTRAINTS
-      
-    #each plane must depart and arrive
-    
-
-    thevars=[y_dep2[p,t] for t in tS]
-    thecoefs=[1.0 for t in tS]
-    model2.linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [1.0])
-    thevars=[y_arr2[p,t] for t in tS]
-    thecoefs=[1.0 for t in tS]
-    model2.linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [1.0])
-    
-    #airplane flow
-    
-    
-    for j in Airport:
-        for t in tS:
-            thevars=[]
-            thecoefs=[]
-            for i in Airport:
-                if i!=j and (i,j) in Distance:
-                    thevars += [y2[i,j,p,t]]
-                    thecoefs += [1.0]
-            thevars+= [y2[j,k,p,t+Traveltime[j,k,p]] for k in Airport  
-                       if k!=j and (j,k) in Distance and t+Traveltime[j,k,p] < number_of_timesteps]
-            thecoefs += [-1.0  for k in Airport  
-                       if k!=j and (j,k) in Distance and t+Traveltime[j,k,p] < number_of_timesteps]
-            
-            rhs_value = 0.0
-            if (j == Airplane[p].origin):
-                thevars.append(y_dep2[p,t])
-                thecoefs.append(1.0)
-            if (j == Airplane[p].destination):
-                thevars.append(y_arr2[p,t])
-                thecoefs.append(-1.0)
-            
-            model2.linear_constraints.add(names=["flow at " + j +", time %d" %t],lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [rhs_value])
-    
-    if (Airplane[p].origin == Airplane[p].destination):
-        i = Airplane[p].origin
-        
-        thevars = [y2[i,j,p,t] for j in Airport if i!=j for t in tS]
-        thecoefs = [1.0]*len(thevars)
-        
-        model2.linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["G"], rhs = [1.0])
-    
-    #old setting of variables according to timefree tour
-    """
-    for i in Airport:
-        for j in Airport:
-            if (i!=j):
-                idToTimeSteps={}
-                for ID in yDividers[i,j,p].ids:
-                    idToTimeSteps[ID]=[]
-            
-                for t in tS:
-                    idToTimeSteps[yDividers[i,j,p].findId(t)].append(t)
-                
-                for ID in yDividers[i,j,p].ids:
-                    thevars=[y2[i,j,p,t] for t in idToTimeSteps[ID]]
-                    
-                    #thecoefs=[1.0]*len(thevars)+[-1.0,1.0]
-                    #thevars+=[ySlack[i,j,p,ID],ySlack2[i,j,p,ID]]
-                    thecoefs=[1.0]*len(thevars)+[-1.0,1.0]
-                    thevars+=[ySlack[i,j,p,ID],ySlack2[i,j,p,ID]]
-                    rhs=solutionValues[name2idx[y[i,j,p,ID]]]
-                    model2.linear_constraints.add(names=["slack"+i+j+str(ID)],lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [rhs])
-
-    
-    
-    idToTimeSteps={}
-    for ID in yArrDividers[p].ids:
-        idToTimeSteps[ID]=[]
-
-    for t in tS:
-        idToTimeSteps[yArrDividers[p].findId(t)].append(t)
-    
-    for ID in yArrDividers[p].ids:
-        thevars=[y_arr2[p,t] for t in idToTimeSteps[ID]]
-        thecoefs=[1.0]*len(thevars)+[-1.0]
-        thevars+=[y_arrSlack[p,ID]]
-        rhs=solutionValues[name2idx[y_arr[p,ID]]]
-        model2.linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [rhs])
-
-    idToTimeSteps={}
-    for ID in yDepDividers[p].ids:
-        idToTimeSteps[ID]=[]
-
-    for t in tS:
-        idToTimeSteps[yDepDividers[p].findId(t)].append(t)
-    
-    for ID in yDepDividers[p].ids:
-        thevars=[y_dep2[p,t] for t in idToTimeSteps[ID]]
-        thecoefs=[1.0]*len(thevars)+[-1.0]
-        thevars+=[y_depSlack[p,ID]]
-        rhs=solutionValues[name2idx[y_dep[p,ID]]]
-        model2.linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [rhs])
-    """  
-    model2.objective.set_sense(model2.objective.sense.minimize)
-    model2.solve()
+    pathModels[p].solve()
     time_start = time.clock()
     
+    if not pathModels[p].is_primal_feasible():
+        breakPath(paths[p][0])
+        break
     
-    """
-
-    #TODO: test if tours can be reconstructed. Use old model2 but set slacks for y variables to 0 try warm start for y variables
-        
-    #model2.variables.add(XVARS)
     
     """
     print(model2.solution.get_objective_value())
@@ -400,12 +252,12 @@ for p in Airplane:
     
     
     #continue
-    assignedRequests={}
+    assignedREQUESTs={}
     x2 = {}
     
     xString={}
-    for i,j in Distance:
-        for r in Request:
+    for i,j in TRIP:
+        for r in REQUEST:
             xString[r]=[]
             for t in tS:
                 x2[i,j,r,p,t]="x#" + i + "_" + j + "_" + r + "_" + p + "_"+str(t)
@@ -417,16 +269,16 @@ for p in Airplane:
         valStore=solutionValues[name2idx[val]]
         if valStore >0.5:
             xString[key[2]]+=["x#" + key[0] + "_" + key[1] + "_" + key[2] + "_" + key[3]]
-            assignedRequests[key[2]]=Request[key[2]]
+            assignedREQUESTs[key[2]]=REQUEST[key[2]]
             for t in tS:
                 model2.variables.set_upper_bounds(x2[key[0],key[1],key[2],key[3],t],1.0 )
 
     xPaths[p]=[]
-    for r in assignedRequests:
+    for r in assignedREQUESTs:
         xPaths[p]+=solToPaths(xString[r])
     x_arr2 = {}
     x_dep2 = {}
-    for r in assignedRequests:
+    for r in assignedREQUESTs:
         for t in tS:
             x_dep2[r,p,t] = "x_dep#" + r + "_" + p + "_" + str(t)
             model2.variables.add(names = [x_dep2[r,p,t]], lb = [0.0], ub = [0.0], types = ["B"])
@@ -452,60 +304,60 @@ for p in Airplane:
 
     """    
     xSlack = {}
-    for i,j in Distance:
-        for r in Request:
+    for i,j in TRIP:
+        for r in REQUEST:
             for ID in xDividers[i,j,r,p].ids:
                 xSlack[i,j,r,p,ID] = "xSlack#" + i + "_" + j + "_" + r + "_" + p + "_"+ID
                 model2.variables.add(obj = [1.0], names = [xSlack[i,j,r,p,ID]], lb = [0],  types = ["I"])
     
     x_depSlack = {}
     
-    for r in Request:
+    for r in REQUEST:
         for ID in xDepDividers[r,p].ids:
             x_depSlack[r,p,ID] = "x_depSlack#" + r + "_" + p + "_" + ID
             model2.variables.add(obj = [1.0],names = [x_depSlack[r,p,ID]], lb = [0],  types = ["I"])
     
     x_arrSlack = {}
     
-    for r in Request:
+    for r in REQUEST:
         for ID in xArrDividers[r,p].ids:
             x_arrSlack[r,p,ID] = "x_arrSlack#" + r + "_" + p + "_" + ID
             model2.variables.add(obj = [1.0],names = [x_arrSlack[r,p,ID]], lb = [0], types = ["I"])
     
     xSlack2 = {}
-    for i,j in Distance:
-        for r in Request:
+    for i,j in TRIP:
+        for r in REQUEST:
             for ID in xDividers[i,j,r,p].ids:
                 xSlack2[i,j,r,p,ID] = "xSlack2#" + i + "_" + j + "_" + r + "_" + p + "_"+ID
                 model2.variables.add(obj = [1.0], names = [xSlack2[i,j,r,p,ID]], lb = [0],  ub = [1.0], types = ["I"])
     
     x_depSlack2 = {}
     
-    for r in Request:
+    for r in REQUEST:
         for ID in xDepDividers[r,p].ids:
             x_depSlack2[r,p,ID] = "x_depSlack2#" + r + "_" + p + "_" + ID
             model2.variables.add(obj = [1.0],names = [x_depSlack2[r,p,ID]], lb = [0],  ub = [1.0],types = ["I"])
     
     x_arrSlack2 = {}
     
-    for r in Request:
+    for r in REQUEST:
         for ID in xArrDividers[r,p].ids:
             x_arrSlack2[r,p,ID] = "x_arrSlack2#" + r + "_" + p + "_" + ID
             model2.variables.add(obj = [1.0],names = [x_arrSlack2[r,p,ID]], lb = [0], ub = [1.0],types = ["I"])
     """            
     seatSlack = {}
-    for i,j in Distance:
+    for i,j in TRIP:
         seatSlack[i,j] = "seatSlack#" + i + "_" + j 
         model2.variables.add(obj = [0.01],names = [seatSlack[i,j]], lb = [0], types = ["I"])
     stopSlack = {}
-    for r in assignedRequests:
+    for r in assignedREQUESTs:
         stopSlack[r] = "stopSlack#" + r
         model2.variables.add(obj = [1], names = [stopSlack[r]], lb = [0], types = ["I"])    
     print("Finished adding additional variables, time passed: %f" % (time.clock() - time_start))
     
-    # each request must depart and arrive
+    # each REQUEST must depart and arrive
     
-    for r in assignedRequests:
+    for r in assignedREQUESTs:
         thevars = [x_dep2[r,p,t] for t in tS]
         thecoefs = [1.0  for t in tS]
         model2.linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [1.0])
@@ -513,75 +365,76 @@ for p in Airplane:
         thecoefs = [1.0  for t in tS]
         model2.linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [1.0])
     
-    print("Each request must depart, time passed: %f" % (time.clock() - time_start))
+    print("Each REQUEST must depart, time passed: %f" % (time.clock() - time_start))
     
-    #TODO: Check if restriction to in Distance has to be added
-    # request flow departure
+    #TODO: Check if restriction to in TRIP has to be added
+    # REQUEST flow departure
     
-    for r in assignedRequests:
+    for r in assignedREQUESTs:
         for t in tS:
-        #for t in xrange(Request[r].earliest_departure,Request[r].latest_arrival):
+        #for t in xrange(REQUEST[r].earliest_departure,REQUEST[r].latest_arrival):
             thevars = [x_dep2[r,p,t]]
             thecoefs = [-1.0]
-            ori=Request[r].origin
-            thevars += [x2[ori,j,r,p,t+Traveltime[ori,j,p]]
-                            for j in Airport if j != ori and t+Traveltime[ori,j,p]< number_of_timesteps]
-            thecoefs += [1.0 for j in Airport if j != ori and t+Traveltime[ori,j,p]< number_of_timesteps]
+            ori=REQUEST[r].origin
+            thevars += [x2[ori,j,r,p,t+turnover_travel_timesteps[ori,j,p]]
+                            for j in AIRPORT if j != ori and t+turnover_travel_timesteps[ori,j,p]< max(tS)]
+            thecoefs += [1.0 for j in AIRPORT if j != ori and t+turnover_travel_timesteps[ori,j,p]< max(tS)]
             
             
             model2.linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [0.0])
 
-    # request flow arrival
+    # REQUEST flow arrival
     
-    for r in assignedRequests:
+    for r in assignedREQUESTs:
         for t in tS:
-        #for t in xrange(Request[r].earliest_departure,Request[r].latest_arrival):
-            desti=Request[r].destination
+            desti=REQUEST[r].destination
             thevars = [x_arr2[r,p,t]]
             thecoefs = [-1.0]
-            #thevars += [x2[j,desti,r,p,t+Traveltime[j,desti,p]]  for j in Airport if j != desti and t+Traveltime[j,desti,p]< number_of_timesteps]
-            thevars += [x2[j,desti,r,p,t]  for j in Airport if j != desti]
-            #thecoefs += [1.0 for j in Airport if j != desti and t+Traveltime[j,desti,p]< number_of_timesteps]
-            thecoefs += [1.0 for j in Airport if j != desti ]
+            thevars += [x2[j,desti,r,p,t]  for j in AIRPORT if j != desti]
+            thecoefs += [1.0 for j in AIRPORT if j != desti ]
 
             model2.linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [0.0])
 
-     # request flow (other than departure and arrival)
-    print("Flow at destination and orgin added, time passed: %f" % (time.clock() - time_start))    
-    for r in assignedRequests:
-        for j in Airport:
-            if (j != Request[r].origin and j != Request[r].destination):
+     
+     
+     
+    print("Flow at destination and orgin added, time passed: %f" % (time.clock() - time_start))
+    
+    # REQUEST flow (other than departure and arrival)   
+    for r in assignedREQUESTs:
+        for j in AIRPORT:
+            if (j != REQUEST[r].origin and j != REQUEST[r].destination):
                 for t in tS:
-                #for t in xrange(Request[r].earliest_departure,Request[r].latest_arrival):
+                #for t in xrange(REQUEST[r].earliest_departure,REQUEST[r].latest_arrival):
                     thevars=[]
                     thecoefs=[]
-                    thevars += [x2[i,j,r,p,t] for i in Airport if (j!= i)]
-                    thecoefs += [1.0  for i in Airport if (j!= i)]
+                    thevars += [x2[i,j,r,p,t] for i in AIRPORT if (j!= i)]
+                    thecoefs += [1.0  for i in AIRPORT if (j!= i)]
                     
-                    thevars += [x2[j,k,r,p,t+Traveltime[j,k,p]] for k in Airport if j != k and t+Traveltime[j,k,p] < number_of_timesteps]
+                    thevars += [x2[j,k,r,p,t+turnover_travel_timesteps[j,k,p]] for k in AIRPORT if j != k and t+turnover_travel_timesteps[j,k,p] < max(tS)]
                     
-                    thecoefs += [-1.0 for k in Airport if j != k and t+Traveltime[j,k,p] < number_of_timesteps];
+                    thecoefs += [-1.0 for k in AIRPORT if j != k and t+turnover_travel_timesteps[j,k,p] < max(tS)];
                            
                     model2.linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [0.0])
     print("Flows added, time passed: %f" % (time.clock() - time_start))
     
     #"""
-    for i,j in Distance:
+    for i,j in TRIP:
         for t in tS:
             #print i,j,p
             thevars = [y2[i,j,p,t],seatSlack[i,j]]
-            thecoefs = [-Airplane[p].seats,-1.0]
-            thevars += [x2[i,j,r,p,t] for r in assignedRequests]
-            thecoefs += [Request[r].passengers for r in assignedRequests]
+            thecoefs = [-PLANE[p].seats,-1.0]
+            thevars += [x2[i,j,r,p,t] for r in assignedREQUESTs]
+            thecoefs += [REQUEST[r].passengers for r in assignedREQUESTs]
             model2.linear_constraints.add(names=["seat "+i+j+str(t)],lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [0.0])
    
     
-    # intermediate stops for requests
+    # intermediate stops for REQUESTs
     
-    for r in assignedRequests:
-        thevars = [x2[i,j,r,p,t] for i,j in Distance  for t in tS]+[stopSlack[r]]
-        thecoefs = [1.0 for i,j in Distance for t in tS ]+[-1.0]
-        model2.linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [Request[r].max_stops + 1])
+    for r in assignedREQUESTs:
+        thevars = [x2[i,j,r,p,t] for i,j in TRIP  for t in tS]+[stopSlack[r]]
+        thecoefs = [1.0 for i,j in TRIP for t in tS ]+[-1.0]
+        model2.linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [REQUEST[r].max_stops + 1])
     #"""
     
     model2.solve()
@@ -596,26 +449,26 @@ for p in Airplane:
         else:
             split=0
     else:
-        requestsToSplit=assignedRequests
+        REQUESTsToSplit=assignedREQUESTs
     
     
     if not model2.solution.is_primal_feasible() or split:
         for path in xPaths[p]:
             pathLength=0
             for i in range(len(path)-1):
-                pathLength+=Traveltime[path[i],path[i+1],p]
+                pathLength+=turnover_travel_timesteps[path[i],path[i+1],p]
             prevPath=0
             for i in range(len(path)):
-                LOP=[prevPath-1+m*pathLength for m in range(int(number_of_timesteps) % int(pathLength)) if prevPath-1+m*pathLength <= number_of_timesteps  and prevPath-1+m*pathLength>0]
+                LOP=[prevPath-1+m*pathLength for m in range(int(max(tS)) % int(pathLength)) if prevPath-1+m*pathLength <= max(tS)  and prevPath-1+m*pathLength>0]
                 if LOP != []:
-                    yDividers[path[i],p].addDivider(LOP,number_of_timesteps)
-                    yDividers[path[i],p].addDivider([1],number_of_timesteps)
-                    for r in Request:
-                        xDividers[path[i],r,p].addDivider(LOP,number_of_timesteps)
-                        xDividers[path[i],r,p].addDivider([1],number_of_timesteps)
+                    yDividers[path[i],p].addDivider(LOP, max(tS))
+                    yDividers[path[i],p].addDivider([1], max(tS))
+                    for r in REQUEST:
+                        xDividers[path[i],r,p].addDivider(LOP, max(tS))
+                        xDividers[path[i],r,p].addDivider([1], max(tS))
                     print("Path Divider for X added")
                 if i < len(path)-1:
-                    prevPath+=Traveltime[path[i],path[i+1],p]
+                    prevPath+=turnover_travel_timesteps[path[i],path[i+1],p]
         break
     else:
         continue#This break is to go back to timefree
@@ -625,18 +478,18 @@ for p in Airplane:
         for path in paths[p]:
             pathLength=0
             for i in range(len(path)-1):
-                pathLength+=Traveltime[path[i],path[i+1],p]
+                pathLength+=turnover_travel_timesteps[path[i],path[i+1],p]
             prevPath=earliestDep
             for i in range(len(path)):
                 LOP=[prevPath+m*pathLength for m in range(int(number_of_timesteps) % int(pathLength)) if prevPath+m*pathLength <= number_of_timesteps]
                 if LOP != []:
                     yDividers[path[i],p].addDivider(LOP,number_of_timesteps)
                     yDividers[path[i],p].addDivider([1],number_of_timesteps)
-                    for r in Request:
+                    for r in REQUEST:
                         xDividers[path[i],r,p].addDivider(LOP,number_of_timesteps)
                         xDividers[path[i],r,p].addDivider([1],number_of_timesteps)
                 if i < len(path)-1:
-                    prevPath+=Traveltime[path[i],path[i+1],p]
+                    prevPath+=turnover_travel_timesteps[path[i],path[i+1],p]
         break#This break is to go back to timefree
         print(model2.solution.get_objective_value())
         
@@ -674,27 +527,27 @@ for p in Airplane:
     time_start=time.clock()
     z2 = {}
         
-    for i,j in Distance:
+    for i,j in TRIP:
         for ID in tS:
             z2[i,j,p,ID] = "z#" + i + "_" + j + "_" + p  + "_" + str(ID)
-            model2.variables.add(names = [z2[i,j,p,ID]], lb = [0], ub = [Airplane[p].max_fuel], types = ["C"])
+            model2.variables.add(names = [z2[i,j,p,ID]], lb = [0], ub = [PLANE[p].max_fuel], types = ["C"])
 
     z_dep2 = {}
     
 
     for ID in tS:
         z_dep2[p,ID] = "z_dep#" + p  + "_" + str(ID)
-        model2.variables.add(names = [z_dep2[p,ID]], lb = [Airplane[p].departure_min_fuel], ub = [Airplane[p].departure_max_fuel], types = ["C"])
+        model2.variables.add(names = [z_dep2[p,ID]], lb = [PLANE[p].departure_min_fuel], ub = [PLANE[p].departure_max_fuel], types = ["C"])
 
     z_arr2 = {}
     
     for ID in tS:
         z_arr2[p,ID] = "z_arr#" + p  + "_" + str(ID)
-        model2.variables.add(names = [z_arr2[p,ID]], lb = [Airplane[p].arrival_min_fuel], ub = [Airplane[p].arrival_max_fuel], types = ["C"])
+        model2.variables.add(names = [z_arr2[p,ID]], lb = [PLANE[p].arrival_min_fuel], ub = [PLANE[p].arrival_max_fuel], types = ["C"])
     
     zSlack = {}
         
-    for i,j in Distance:
+    for i,j in TRIP:
         for ID in zDividers[i,j,p].ids:
             zSlack[i,j,p,ID] = "zSlack#" + i + "_" + j + "_" + p  + "_" + str(ID)
             model2.variables.add(names = [zSlack[i,j,p,ID]], lb = [0.0], types = ["C"])
@@ -713,7 +566,7 @@ for p in Airplane:
     
     zSlack2 = {}
         
-    for i,j in Distance:
+    for i,j in TRIP:
         for ID in zDividers[i,j,p].ids:
             zSlack2[i,j,p,ID] = "zSlack2#" + i + "_" + j + "_" + p  + "_" + str(ID)
             model2.variables.add(names = [zSlack2[i,j,p,ID]], lb = [0.0], types = ["C"])
@@ -736,40 +589,40 @@ for p in Airplane:
     
     
     
-    for i,j in Distance:
+    for i,j in TRIP:
         for t in tS:
             #print i,j,p
             thevars = [z2[i,j,p,t],y2[i,j,p,t]]
-            thecoefs = [1.0,Fuelconsumption[i,j,p] + Airplane[p].reserve_fuel - Airplane[p].max_fuel]
+            thecoefs = [1.0,Fuelconsumption[i,j,p] + PLANE[p].reserve_fuel - PLANE[p].max_fuel]
             
 
             model2.linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [0.0])
     
-    for j in Airport:
+    for j in AIRPORT:
         for t in tS:
 
-            thevars = [z2[i,j,p,t] for i in Airport if j!=i]
-            thecoefs = [1.0 for i in Airport if j!=i]
+            thevars = [z2[i,j,p,t] for i in AIRPORT if j!=i]
+            thecoefs = [1.0 for i in AIRPORT if j!=i]
                 
                 
-            if j == Airplane[p].origin:
+            if j == PLANE[p].origin:
                 thevars.append(z_dep2[p,t])
                 thecoefs.append(1.0)
             
-            thevars += [z2[j,k,p,t+Traveltime[j,k,p]] for k in Airport if (j,k) in Distance and j!=k and t+Traveltime[j,k,p] < number_of_timesteps]    
-            thecoefs += [-1.0 for k in Airport if (j,k) in Distance and j!=k and t+Traveltime[j,k,p] < number_of_timesteps]
-            thevars += [y2[j,k,p,t+Traveltime[j,k,p]] for k in Airport  if k!=j and (j,k) in Distance and t+Traveltime[j,k,p] < number_of_timesteps]    
-            thecoefs += [-Fuelconsumption[j,k,p] for k in Airport  if k!=j and (j,k) in Distance and t+Traveltime[j,k,p] < number_of_timesteps]
+            thevars += [z2[j,k,p,t+turnover_travel_timesteps[j,k,p]] for k in AIRPORT if (j,k) in TRIP and j!=k and t+turnover_travel_timesteps[j,k,p] < number_of_timesteps]    
+            thecoefs += [-1.0 for k in AIRPORT if (j,k) in TRIP and j!=k and t+turnover_travel_timesteps[j,k,p] < number_of_timesteps]
+            thevars += [y2[j,k,p,t+turnover_travel_timesteps[j,k,p]] for k in AIRPORT  if k!=j and (j,k) in TRIP and t+turnover_travel_timesteps[j,k,p] < number_of_timesteps]    
+            thecoefs += [-Fuelconsumption[j,k,p] for k in AIRPORT  if k!=j and (j,k) in TRIP and t+turnover_travel_timesteps[j,k,p] < number_of_timesteps]
             
             
             
             
-            if j == Airplane[p].destination:
+            if j == PLANE[p].destination:
                 thevars.append(z_arr2[p,t])
                 thecoefs.append(-1.0)
             
             
-            if Airport[j].fuel[str(Airplane[p].required_fueltype)] == '0':
+            if AIRPORT[j].fuel[str(PLANE[p].required_fueltype)] == '0':
                 model2.linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [0.0])
             else:
                 model2.linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [0.0])
@@ -777,14 +630,14 @@ for p in Airplane:
     print("Flows added, time passed: %f" % (time.clock() - time_start))
     # weight limit (=max fuel)
     
-    for i,j in Distance:
+    for i,j in TRIP:
         for t in tS:
-            thevars = [x2[i,j,r,p,t] for r in Request ]
-            thecoefs = [Request[r].weight for r in Request]
+            thevars = [x2[i,j,r,p,t] for r in REQUEST ]
+            thecoefs = [REQUEST[r].weight for r in REQUEST]
             thevars.append(z2[i,j,p,t])
             thecoefs.append(1.0)
             thevars += [y2[i,j,p,t]]
-            thecoefs.append(-min(Weightlimit[i,p].max_takeoff_weight - Airplane[p].reserve_fuel - Airplane[p].empty_weight + Fuelconsumption[i,j,p], Weightlimit[i,p].max_landing_weight - Airplane[p].reserve_fuel - Airplane[p].empty_weight))
+            thecoefs.append(-min(Weightlimit[i,p].max_takeoff_weight - PLANE[p].reserve_fuel - PLANE[p].empty_weight + Fuelconsumption[i,j,p], Weightlimit[i,p].max_landing_weight - PLANE[p].reserve_fuel - PLANE[p].empty_weight))
             
             model2.linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [0.0])
 
@@ -792,7 +645,7 @@ for p in Airplane:
 
     
 
-    for (i,j) in Distance:
+    for (i,j) in TRIP:
         if (i!=j):
             idToTimeSteps={}
             for ID in zDividers[i,j,p].ids:
