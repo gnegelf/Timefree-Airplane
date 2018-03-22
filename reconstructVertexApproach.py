@@ -12,7 +12,7 @@ def pathHasArc(path,arc):
         if path[i]== arc[0] and path[i+1]==arc[1]:
             return 1
 
-
+#testFunction for SolToPaths
 def testSolToPaths(n,m):
     for k in range(m):
         stringList=["y#0_1"]
@@ -45,11 +45,12 @@ def testSolToPaths(n,m):
         if len(solToPaths(stringList))==1:
             print("Failure Alert")
 
+
+#turns a list of strings with variable names into a list of paths
 def solToPaths(solutionStringList):
     pathList=[]
     for string in solutionStringList:
         pathList.append([(re.split("[_#]",string)[1]),(re.split("[_#]",string)[2])])
-
     prevLength=0
     curLength=len(pathList)
     while (prevLength!=curLength):
@@ -84,19 +85,47 @@ def solToPaths(solutionStringList):
                 break
     return pathList
 
+
+#changes dividers so that the not fully expanded model cannot find the infeasible path path anymore
+def breakPath(path,start_time,end_time,breakX = 0):
+    pathLength=0
+    for i in range(len(path)-1):
+        pathLength+=turnover_travel_timesteps[path[i],path[i+1],p]
+    prevPath=start_time
+    for i in range(len(path)):
+        iters=1
+        breakPoint=prevPath+iters*pathLength - 1
+        
+        while (breakPoint < end_time):
+            yDividers[path[i],p].addDivider([breakPoint])
+            zDividers[path[i],p].addDivider([breakPoint])
+            
+            if breakX:
+                xDividers[path[i],p].addDivider([breakPoint])
+            iters += 1
+            breakPoint=prevPath+iters*pathLength - 1
+               
+        if i < len(path)-1:
+            prevPath+=turnover_travel_timesteps[path[i],path[i+1],p]
+
+
+
 #grab the old solution values
 solutionValues = model.solution.get_values()
 name2idx = { n : j for j, n in enumerate(model.variables.get_names()) }
 name2solutionValue = { n : solutionValues[j] for j, n in enumerate(model.variables.get_names()) }
 
 
-paths={}
-flyTime={}
-xPaths={}
+paths = {}
+flyTime = {}
+xPaths = {}
+assignedRequests = {}
 
 
 for p in PLANE:
     print('Checking PLANE ' + p)
+    
+    assignedRequests[p] = {}
     
     #Print the timefree tour of the plane for debugging
     print("Timefree Tour:")
@@ -163,28 +192,7 @@ for p in PLANE:
     if len(paths[p])>1:#cycle check
         for path in paths[p]:
             if path[0]!=PLANE[p].origin and path[0]==path[-1]:#condition for a disconnected cycle
-                cycleLength=0
-                for i in range(1,len(path)):
-                    cycleLength+=turnover_travel_timesteps[path[i-1],path[i],p]
-                prevPath=earliestDep
-                for i in range(0,len(path)):
-                    LOP=[prevPath-1+m*cycleLength for m in range(1+int(number_of_timesteps) % int(cycleLength)) 
-                            if prevPath-1+m*cycleLength <= number_of_timesteps and prevPath-1+m*cycleLength>0]
-                    if LOP != []:
-                        print("Cycle Divider added")
-                        yDividers[path[i],p].addDivider(LOP,number_of_timesteps)
-                        yDividers[path[i],p].addDivider([1],number_of_timesteps)
-                        for r in REQUEST:
-                            xDividers[path[i],r,p].addDivider(LOP,number_of_timesteps)
-                            xDividers[path[i],r,p].addDivider([1],number_of_timesteps)
-                        #yDepDividers[p].addDivider(LOP,number_of_timesteps)
-                        #yArrDividers[p].addDivider(LOP,number_of_timesteps)
-                    if i < len(path)-1:
-                        prevPath+=turnover_travel_timesteps[path[i],path[i+1],p]
-        break #This break is to go back to timefree                
-    while paths[p][0][0] != PLANE[p].origin:
-        paths[p][0].pop(0)
-        paths[p][0].append(paths[p][0][0])
+                breakPath(path,tP[p][0],tP[p][-1])
         
     #Check if path can be flown in time
     if flyTime[p] > latestArr-earliestDep-0.0001:
@@ -211,517 +219,71 @@ for p in PLANE:
 
     if paths[p] == []:
         continue
-    for i,j in TRIP:
+    for i,j in TRIP0:
         if pathHasArc(paths[p][0],[i,j]):
-            pathModels[p].variables.set_upper_bounds(names = [y2[i,j,p,t] for t in tP[p]], ub = [1.0 for t in tP[p]])
-            requestModels[p].variables.set_upper_bounds(names = [y2[i,j,p,t] for t in tP[p]], ub = [1.0 for t in tP[p]])
-            fullModels[p].variables.set_upper_bounds(names = [y2[i,j,p,t] for t in tP[p]], ub = [1.0 for t in tP[p]])
+            pathModels[p].variables.set_upper_bounds( [(y2[i,j,p,t],1.0) for t in tP[p]] )
+            requestModels[p].variables.set_upper_bounds( [(y2[i,j,p,t],1.0) for t in tP[p]] )
+            fullModels[p].variables.set_upper_bounds( [(y2[i,j,p,t],1.0) for t in tP[p]] )
         else:
-            pathModels[p].variables.set_upper_bounds(names = [y2[i,j,p,t] for t in tP[p]], ub = [0.0 for t in tP[p]])
-            requestModels[p].variables.set_upper_bounds(names = [y2[i,j,p,t] for t in tP[p]], ub = [0.0 for t in tP[p]])
-            fullModels[p].variables.set_upper_bounds(names = [y2[i,j,p,t] for t in tP[p]], ub = [0.0 for t in tP[p]])
+            pathModels[p].variables.set_upper_bounds( [(y2[i,j,p,t],0.0) for t in tP[p]] )
+            requestModels[p].variables.set_upper_bounds( [(y2[i,j,p,t],0.0) for t in tP[p]] )
+            fullModels[p].variables.set_upper_bounds( [(y2[i,j,p,t],0.0) for t in tP[p]] )
     
      
     pathModels[p].solve()
+    continue
+    if not pathModels[p].solution.is_primal_feasible():
+        breakPath(paths[p][0],tP[p][0],tP[p][-1])
+        break
+    
+    
     time_start = time.clock()
-    
-    if not pathModels[p].is_primal_feasible():
-        breakPath(paths[p][0])
-        break
+    #check if the requests can be assigned to the tours
     
     
-    """
-    print(model2.solution.get_objective_value())
-    #continue
-    solutionValues2=model2.solution.get_values()
-    name2idx2 = { n : j for j, n in enumerate(model2.variables.get_names()) }
-    idx2name = { j : n for j, n in enumerate(model2.variables.get_names()) }
-    
-    
-
-    print("New tour")
-    for key,val in y2.iteritems():
-        valStore=solutionValues2[name2idx2[val]]
-        if valStore > 0.5:
-            print(val +" %f" %valStore)
-    for key,val in y_dep2.iteritems():
-        valStore=solutionValues2[name2idx2[val]]
-        if valStore > 0.5:
-            print(val +" %f" %valStore)
-
-    
-    
-    #continue
-    assignedREQUESTs={}
-    x2 = {}
-    
-    xString={}
+    requestArcs = {}
     for i,j in TRIP:
-        for r in REQUEST:
-            xString[r]=[]
-            for t in tS:
-                x2[i,j,r,p,t]="x#" + i + "_" + j + "_" + r + "_" + p + "_"+str(t)
-                model2.variables.add(names = [x2[i,j,r,p,t]], lb = [0.0], ub = [0.0], types = ["B"])
-    
+        requestArcs[i,j] = 0
+        
+    for r in REQUEST:
+        assignedRequests[p][r] = 0
+        
+    #find assigned requests and set arcs
     for key,val in x.iteritems():
-        if key[3]!=p:
-            continue
-        valStore=solutionValues[name2idx[val]]
-        if valStore >0.5:
-            xString[key[2]]+=["x#" + key[0] + "_" + key[1] + "_" + key[2] + "_" + key[3]]
-            assignedREQUESTs[key[2]]=REQUEST[key[2]]
-            for t in tS:
-                model2.variables.set_upper_bounds(x2[key[0],key[1],key[2],key[3],t],1.0 )
-
-    xPaths[p]=[]
-    for r in assignedREQUESTs:
-        xPaths[p]+=solToPaths(xString[r])
-    x_arr2 = {}
-    x_dep2 = {}
-    for r in assignedREQUESTs:
-        for t in tS:
-            x_dep2[r,p,t] = "x_dep#" + r + "_" + p + "_" + str(t)
-            model2.variables.add(names = [x_dep2[r,p,t]], lb = [0.0], ub = [0.0], types = ["B"])
-            x_arr2[r,p,t] = "x_arr#" + r + "_" + p + "_" + str(t)
-            model2.variables.add(names = [x_arr2[r,p,t]], lb = [0.0], ub = [0.0], types = ["B"])
-    
-    for key,val in x_arr.iteritems():
-        if key[1]!=p:
-            continue
-        valStore=solutionValues[name2idx[val]]
-        if valStore >0.5:
-            for t in tS:
-                model2.variables.set_upper_bounds(x_arr2[key[0],key[1],t],1.0 )
-    
-    for key,val in x_dep.iteritems():
-        if key[1]!=p:
-            continue
-        valStore=solutionValues[name2idx[val]]
-        if valStore >0.5:
-            for t in tS:
-                model2.variables.set_upper_bounds(x_dep2[key[0],key[1],t],1.0 )       
-    #continue
-
-    """    
-    xSlack = {}
-    for i,j in TRIP:
-        for r in REQUEST:
-            for ID in xDividers[i,j,r,p].ids:
-                xSlack[i,j,r,p,ID] = "xSlack#" + i + "_" + j + "_" + r + "_" + p + "_"+ID
-                model2.variables.add(obj = [1.0], names = [xSlack[i,j,r,p,ID]], lb = [0],  types = ["I"])
-    
-    x_depSlack = {}
-    
-    for r in REQUEST:
-        for ID in xDepDividers[r,p].ids:
-            x_depSlack[r,p,ID] = "x_depSlack#" + r + "_" + p + "_" + ID
-            model2.variables.add(obj = [1.0],names = [x_depSlack[r,p,ID]], lb = [0],  types = ["I"])
-    
-    x_arrSlack = {}
-    
-    for r in REQUEST:
-        for ID in xArrDividers[r,p].ids:
-            x_arrSlack[r,p,ID] = "x_arrSlack#" + r + "_" + p + "_" + ID
-            model2.variables.add(obj = [1.0],names = [x_arrSlack[r,p,ID]], lb = [0], types = ["I"])
-    
-    xSlack2 = {}
-    for i,j in TRIP:
-        for r in REQUEST:
-            for ID in xDividers[i,j,r,p].ids:
-                xSlack2[i,j,r,p,ID] = "xSlack2#" + i + "_" + j + "_" + r + "_" + p + "_"+ID
-                model2.variables.add(obj = [1.0], names = [xSlack2[i,j,r,p,ID]], lb = [0],  ub = [1.0], types = ["I"])
-    
-    x_depSlack2 = {}
-    
-    for r in REQUEST:
-        for ID in xDepDividers[r,p].ids:
-            x_depSlack2[r,p,ID] = "x_depSlack2#" + r + "_" + p + "_" + ID
-            model2.variables.add(obj = [1.0],names = [x_depSlack2[r,p,ID]], lb = [0],  ub = [1.0],types = ["I"])
-    
-    x_arrSlack2 = {}
-    
-    for r in REQUEST:
-        for ID in xArrDividers[r,p].ids:
-            x_arrSlack2[r,p,ID] = "x_arrSlack2#" + r + "_" + p + "_" + ID
-            model2.variables.add(obj = [1.0],names = [x_arrSlack2[r,p,ID]], lb = [0], ub = [1.0],types = ["I"])
-    """            
-    seatSlack = {}
-    for i,j in TRIP:
-        seatSlack[i,j] = "seatSlack#" + i + "_" + j 
-        model2.variables.add(obj = [0.01],names = [seatSlack[i,j]], lb = [0], types = ["I"])
-    stopSlack = {}
-    for r in assignedREQUESTs:
-        stopSlack[r] = "stopSlack#" + r
-        model2.variables.add(obj = [1], names = [stopSlack[r]], lb = [0], types = ["I"])    
-    print("Finished adding additional variables, time passed: %f" % (time.clock() - time_start))
-    
-    # each REQUEST must depart and arrive
-    
-    for r in assignedREQUESTs:
-        thevars = [x_dep2[r,p,t] for t in tS]
-        thecoefs = [1.0  for t in tS]
-        model2.linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [1.0])
-        thevars = [x_arr2[r,p,t]  for t in tS]
-        thecoefs = [1.0  for t in tS]
-        model2.linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [1.0])
-    
-    print("Each REQUEST must depart, time passed: %f" % (time.clock() - time_start))
-    
-    #TODO: Check if restriction to in TRIP has to be added
-    # REQUEST flow departure
-    
-    for r in assignedREQUESTs:
-        for t in tS:
-        #for t in xrange(REQUEST[r].earliest_departure,REQUEST[r].latest_arrival):
-            thevars = [x_dep2[r,p,t]]
-            thecoefs = [-1.0]
-            ori=REQUEST[r].origin
-            thevars += [x2[ori,j,r,p,t+turnover_travel_timesteps[ori,j,p]]
-                            for j in AIRPORT if j != ori and t+turnover_travel_timesteps[ori,j,p]< max(tS)]
-            thecoefs += [1.0 for j in AIRPORT if j != ori and t+turnover_travel_timesteps[ori,j,p]< max(tS)]
-            
-            
-            model2.linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [0.0])
-
-    # REQUEST flow arrival
-    
-    for r in assignedREQUESTs:
-        for t in tS:
-            desti=REQUEST[r].destination
-            thevars = [x_arr2[r,p,t]]
-            thecoefs = [-1.0]
-            thevars += [x2[j,desti,r,p,t]  for j in AIRPORT if j != desti]
-            thecoefs += [1.0 for j in AIRPORT if j != desti ]
-
-            model2.linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [0.0])
-
-     
-     
-     
-    print("Flow at destination and orgin added, time passed: %f" % (time.clock() - time_start))
-    
-    # REQUEST flow (other than departure and arrival)   
-    for r in assignedREQUESTs:
-        for j in AIRPORT:
-            if (j != REQUEST[r].origin and j != REQUEST[r].destination):
-                for t in tS:
-                #for t in xrange(REQUEST[r].earliest_departure,REQUEST[r].latest_arrival):
-                    thevars=[]
-                    thecoefs=[]
-                    thevars += [x2[i,j,r,p,t] for i in AIRPORT if (j!= i)]
-                    thecoefs += [1.0  for i in AIRPORT if (j!= i)]
-                    
-                    thevars += [x2[j,k,r,p,t+turnover_travel_timesteps[j,k,p]] for k in AIRPORT if j != k and t+turnover_travel_timesteps[j,k,p] < max(tS)]
-                    
-                    thecoefs += [-1.0 for k in AIRPORT if j != k and t+turnover_travel_timesteps[j,k,p] < max(tS)];
-                           
-                    model2.linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [0.0])
-    print("Flows added, time passed: %f" % (time.clock() - time_start))
-    
-    #"""
-    for i,j in TRIP:
-        for t in tS:
-            #print i,j,p
-            thevars = [y2[i,j,p,t],seatSlack[i,j]]
-            thecoefs = [-PLANE[p].seats,-1.0]
-            thevars += [x2[i,j,r,p,t] for r in assignedREQUESTs]
-            thecoefs += [REQUEST[r].passengers for r in assignedREQUESTs]
-            model2.linear_constraints.add(names=["seat "+i+j+str(t)],lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [0.0])
-   
-    
-    # intermediate stops for REQUESTs
-    
-    for r in assignedREQUESTs:
-        thevars = [x2[i,j,r,p,t] for i,j in TRIP  for t in tS]+[stopSlack[r]]
-        thecoefs = [1.0 for i,j in TRIP for t in tS ]+[-1.0]
-        model2.linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [REQUEST[r].max_stops + 1])
-    #"""
-    
-    model2.solve()
-    split=0
-    if model2.solution.is_primal_feasible():
-        print(model2.solution.get_objective_value())
-        solutionValues2=model2.solution.get_values()
-        name2idx2 = { n : j for j, n in enumerate(model2.variables.get_names()) }
-        idx2name = { j : n for j, n in enumerate(model2.variables.get_names()) }
-        if model2.solution.get_objective_value()>0.0001:
-            split=1
-        else:
-            split=0
-    else:
-        REQUESTsToSplit=assignedREQUESTs
-    
-    
-    if not model2.solution.is_primal_feasible() or split:
-        for path in xPaths[p]:
-            pathLength=0
-            for i in range(len(path)-1):
-                pathLength+=turnover_travel_timesteps[path[i],path[i+1],p]
-            prevPath=0
-            for i in range(len(path)):
-                LOP=[prevPath-1+m*pathLength for m in range(int(max(tS)) % int(pathLength)) if prevPath-1+m*pathLength <= max(tS)  and prevPath-1+m*pathLength>0]
-                if LOP != []:
-                    yDividers[path[i],p].addDivider(LOP, max(tS))
-                    yDividers[path[i],p].addDivider([1], max(tS))
-                    for r in REQUEST:
-                        xDividers[path[i],r,p].addDivider(LOP, max(tS))
-                        xDividers[path[i],r,p].addDivider([1], max(tS))
-                    print("Path Divider for X added")
-                if i < len(path)-1:
-                    prevPath+=turnover_travel_timesteps[path[i],path[i+1],p]
-        break
-    else:
-        continue#This break is to go back to timefree
-    
-        """
-    if flyTime[p] > latestArr-earliestDep-0.0001:
-        for path in paths[p]:
-            pathLength=0
-            for i in range(len(path)-1):
-                pathLength+=turnover_travel_timesteps[path[i],path[i+1],p]
-            prevPath=earliestDep
-            for i in range(len(path)):
-                LOP=[prevPath+m*pathLength for m in range(int(number_of_timesteps) % int(pathLength)) if prevPath+m*pathLength <= number_of_timesteps]
-                if LOP != []:
-                    yDividers[path[i],p].addDivider(LOP,number_of_timesteps)
-                    yDividers[path[i],p].addDivider([1],number_of_timesteps)
-                    for r in REQUEST:
-                        xDividers[path[i],r,p].addDivider(LOP,number_of_timesteps)
-                        xDividers[path[i],r,p].addDivider([1],number_of_timesteps)
-                if i < len(path)-1:
-                    prevPath+=turnover_travel_timesteps[path[i],path[i+1],p]
-        break#This break is to go back to timefree
-        print(model2.solution.get_objective_value())
-        
-        solutionValues2=model2.solution.get_values()
-        name2idx2 = { n : j for j, n in enumerate(model2.variables.get_names()) }
-        
-        for key,val in x.iteritems():
+        if key[3]==p:
             valStore=solutionValues[name2idx[val]]
-            if valStore > 0.5:
-                print(val+" %f" % valStore)
-        
-        for key,val in xSlack.iteritems():
-            valStore=solutionValues2[name2idx2[val]]
-            if valStore > 0.5:
-                print(val+" %f" % valStore)
-        for key,val in xSlack2.iteritems():
-            valStore=solutionValues2[name2idx2[val]]
-            if valStore > 0.5:
-                print(val+" %f" % valStore)
-        print("New tour")
-        for key,val in x2.iteritems():
-            valStore=solutionValues2[name2idx2[val]]
-            if valStore > 0.5:
-                print(val +" %f" % valStore)
-        for key,val in seatSlack.iteritems():
-            valStore=solutionValues2[name2idx2[val]]
-            if valStore > 0.0001:
-                print(val +" %f" % valStore)
-        for key,val in stopSlack.iteritems():
-            valStore=solutionValues2[name2idx2[val]]
-            if valStore > 0.0001:
-                print(val +" %f" % valStore)+"""
-    continue      
-    """
-    time_start=time.clock()
-    z2 = {}
-        
-    for i,j in TRIP:
-        for ID in tS:
-            z2[i,j,p,ID] = "z#" + i + "_" + j + "_" + p  + "_" + str(ID)
-            model2.variables.add(names = [z2[i,j,p,ID]], lb = [0], ub = [PLANE[p].max_fuel], types = ["C"])
-
-    z_dep2 = {}
-    
-
-    for ID in tS:
-        z_dep2[p,ID] = "z_dep#" + p  + "_" + str(ID)
-        model2.variables.add(names = [z_dep2[p,ID]], lb = [PLANE[p].departure_min_fuel], ub = [PLANE[p].departure_max_fuel], types = ["C"])
-
-    z_arr2 = {}
-    
-    for ID in tS:
-        z_arr2[p,ID] = "z_arr#" + p  + "_" + str(ID)
-        model2.variables.add(names = [z_arr2[p,ID]], lb = [PLANE[p].arrival_min_fuel], ub = [PLANE[p].arrival_max_fuel], types = ["C"])
-    
-    zSlack = {}
-        
-    for i,j in TRIP:
-        for ID in zDividers[i,j,p].ids:
-            zSlack[i,j,p,ID] = "zSlack#" + i + "_" + j + "_" + p  + "_" + str(ID)
-            model2.variables.add(names = [zSlack[i,j,p,ID]], lb = [0.0], types = ["C"])
-    
-    z_depSlack = {}
-    
-    for ID in zDepDividers[p].ids:
-        z_depSlack[p,ID] = "z_depSlack#" + p  + "_" + str(ID)
-        model2.variables.add(names = [z_depSlack[p,ID]], lb = [0.0], types = ["C"])
-    
-    z_arrSlack = {}
-    
-    for ID in zArrDividers[p].ids:
-        z_arrSlack[p,ID] = "z_arrSlack#" + p  + "_" + str(ID)
-        model2.variables.add(names = [z_arrSlack[p,ID]], lb = [0.0], types = ["C"])
-    
-    zSlack2 = {}
-        
-    for i,j in TRIP:
-        for ID in zDividers[i,j,p].ids:
-            zSlack2[i,j,p,ID] = "zSlack2#" + i + "_" + j + "_" + p  + "_" + str(ID)
-            model2.variables.add(names = [zSlack2[i,j,p,ID]], lb = [0.0], types = ["C"])
-    
-    z_depSlack2 = {}
-    
-    for ID in zDepDividers[p].ids:
-        z_depSlack2[p,ID] = "z_depSlack2#" + p  + "_" + str(ID)
-        model2.variables.add(names = [z_depSlack2[p,ID]], lb = [0.0], types = ["C"])
-    
-    z_arrSlack2 = {}
-    
-    for ID in zArrDividers[p].ids:
-        z_arrSlack2[p,ID] = "z_arrSlack2#" + p  + "_" + str(ID)
-        model2.variables.add(names = [z_arrSlack2[p,ID]], lb = [0.0], types = ["C"])
+            if valStore > 0.1:
+                assignedRequests[p][r] = 1
+                requestArcs[key[0],key[1]] = 1
     
     
-    print("Finished adding additional variables, time passed: %f" % (time.clock() - time_start))
-    
-    
-    
-    
-    for i,j in TRIP:
-        for t in tS:
-            #print i,j,p
-            thevars = [z2[i,j,p,t],y2[i,j,p,t]]
-            thecoefs = [1.0,Fuelconsumption[i,j,p] + PLANE[p].reserve_fuel - PLANE[p].max_fuel]
+    for r,assigned in assignedRequests[p].iteritems():
+        for i,j in TRIP0:
+            requestModels[p].variables.set_upper_bounds( [(x2[i,j,r,p,t],requestArcs[i,j] * assigned) for t in tR[r]])
+            fullModels[p].variables.set_upper_bounds( [(x2[i,j,r,p,t],requestArcs[i,j] * assigned) for t in tR[r]])
             
-
-            model2.linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [0.0])
+            requestModels[p].variables.set_lower_bounds( [(x2[i,j,r,p,t],requestArcs[i,j] * assigned) for t in tR[r]])
+            fullModels[p].variables.set_lower_bounds( [(x2[i,j,r,p,t],requestArcs[i,j] * assigned) for t in tR[r]])
+        requestModels[p].variables.set_upper_bounds( [(r2[r,p], assigned)])
+        fullModels[p].variables.set_upper_bounds( [(r2[r,p], assigned)])
     
-    for j in AIRPORT:
-        for t in tS:
-
-            thevars = [z2[i,j,p,t] for i in AIRPORT if j!=i]
-            thecoefs = [1.0 for i in AIRPORT if j!=i]
-                
-                
-            if j == PLANE[p].origin:
-                thevars.append(z_dep2[p,t])
-                thecoefs.append(1.0)
-            
-            thevars += [z2[j,k,p,t+turnover_travel_timesteps[j,k,p]] for k in AIRPORT if (j,k) in TRIP and j!=k and t+turnover_travel_timesteps[j,k,p] < number_of_timesteps]    
-            thecoefs += [-1.0 for k in AIRPORT if (j,k) in TRIP and j!=k and t+turnover_travel_timesteps[j,k,p] < number_of_timesteps]
-            thevars += [y2[j,k,p,t+turnover_travel_timesteps[j,k,p]] for k in AIRPORT  if k!=j and (j,k) in TRIP and t+turnover_travel_timesteps[j,k,p] < number_of_timesteps]    
-            thecoefs += [-Fuelconsumption[j,k,p] for k in AIRPORT  if k!=j and (j,k) in TRIP and t+turnover_travel_timesteps[j,k,p] < number_of_timesteps]
-            
-            
-            
-            
-            if j == PLANE[p].destination:
-                thevars.append(z_arr2[p,t])
-                thecoefs.append(-1.0)
-            
-            
-            if AIRPORT[j].fuel[str(PLANE[p].required_fueltype)] == '0':
-                model2.linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [0.0])
-            else:
-                model2.linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [0.0])
-                
-    print("Flows added, time passed: %f" % (time.clock() - time_start))
-    # weight limit (=max fuel)
     
-    for i,j in TRIP:
-        for t in tS:
-            thevars = [x2[i,j,r,p,t] for r in REQUEST ]
-            thecoefs = [REQUEST[r].weight for r in REQUEST]
-            thevars.append(z2[i,j,p,t])
-            thecoefs.append(1.0)
-            thevars += [y2[i,j,p,t]]
-            thecoefs.append(-min(Weightlimit[i,p].max_takeoff_weight - PLANE[p].reserve_fuel - PLANE[p].empty_weight + Fuelconsumption[i,j,p], Weightlimit[i,p].max_landing_weight - PLANE[p].reserve_fuel - PLANE[p].empty_weight))
-            
-            model2.linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [0.0])
-
-
-
-    
-
-    for (i,j) in TRIP:
-        if (i!=j):
-            idToTimeSteps={}
-            for ID in zDividers[i,j,p].ids:
-                idToTimeSteps[ID]=[]
-        
-            for t in tS:
-                idToTimeSteps[zDividers[i,j,p].findId(t)].append(t)
-            
-            for ID in zDividers[i,j,p].ids:
-                thevars=[z2[i,j,p,t] for t in idToTimeSteps[ID]]
-                thecoefs=[1.0]*len(thevars)+[-1.0,1.0]
-                thevars+=[zSlack[i,j,p,ID],zSlack2[i,j,p,ID]]
-                rhs=solutionValues[name2idx[z[i,j,p,ID]]]
-                model2.linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [rhs])
-
-    
-
-    idToTimeSteps={}
-    for ID in zArrDividers[p].ids:
-        idToTimeSteps[ID]=[]
-
-    for t in tS:
-        idToTimeSteps[zArrDividers[p].findId(t)].append(t)
-    
-    for ID in zArrDividers[p].ids:
-        thevars=[z_arr2[p,t] for t in idToTimeSteps[ID]]
-        thecoefs=[1.0]*len(thevars)+[-1.0,1.0]
-        thevars+=[z_arrSlack[p,ID],z_arrSlack2[p,ID]]
-        rhs=solutionValues[name2idx[y_arr[p,ID]]]
-        model2.linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [rhs])
-    
-
-    idToTimeSteps={}
-    for ID in zDepDividers[p].ids:
-        idToTimeSteps[ID]=[]
-
-    for t in tS:
-        idToTimeSteps[zDepDividers[p].findId(t)].append(t)
-    
-    for ID in zDepDividers[p].ids:
-        thevars=[z_dep2[p,t] for t in idToTimeSteps[ID]]
-        thecoefs=[1.0]*len(thevars)+[-1.0,1.0]
-        thevars+=[z_depSlack[p,ID],z_depSlack2[p,ID]]
-        rhs=solutionValues[name2idx[z_dep[p,ID]]]
-        model2.linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [rhs])
+    requestModels[p].solve()
+    if not pathModels[p].solution.is_primal_feasible():
+        for r,assigned in assignedRequests[p].iteritems():
+            if assigned:
+                breakPath(xPaths[p][0],tR[r][0],tR[r][1],breakX=1)
+        break
     
     
     
+    fullModels[p].solve()
+    if not fullModels[p].solution.is_primal_feasible():
+        for r,assigned in assignedRequests[p].iteritems():
+            if assigned:
+                breakPath(xPaths[p][0])
+        break       
     
     
-    model2.solve()
-    """
-    """
-    print(model2.solution.get_objective_value())
-    
-    solutionValues2=model2.solution.get_values()
-    name2idx2 = { n : j for j, n in enumerate(model2.variables.get_names()) }
-    
-    for key,val in x.iteritems():
-        valStore=solutionValues[name2idx[val]]
-        if valStore > 0.5:
-            print(val+" %f" % valStore)
-    
-    for key,val in xSlack.iteritems():
-        valStore=solutionValues2[name2idx2[val]]
-        if valStore > 0.5:
-            print(val+" %f" % valStore)
-    for key,val in xSlack2.iteritems():
-        valStore=solutionValues2[name2idx2[val]]
-        if valStore > 0.5:
-            print(val+" %f" % valStore)
-    print("New tour")
-    for key,val in x2.iteritems():
-        valStore=solutionValues2[name2idx2[val]]
-        if valStore > 0.5:
-            print(val +" %f" % valStore)
-    """
 print(flyTime)
 print(paths)

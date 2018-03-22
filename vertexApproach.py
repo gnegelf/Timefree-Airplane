@@ -100,7 +100,7 @@ class DIVIDERCOLLECTION(object):
         LOP=[]
         for i in listOfPoints:
             if i>self.min_time and i<self.max_time:
-                LOP+=i
+                LOP+=[i]
         if LOP == []:
             print("List out of divider range")
         else:
@@ -462,7 +462,7 @@ travel_time = {}
 
 for p in PLANE:
   for i, j in TRIP:
-    travel_time[i,j,p] = int(math.floor(TRIP[i,j] / ((PLANE[p].speed / 60) * 5)) * 5)
+    travel_time[i,j,p] = int(math.floor(TRIP[i,j] / ((PLANE[p].speed / 60) * 5)) * 5)#TODO: why not ceil?
 
 #intermediate
 travel_timesteps = {}
@@ -664,8 +664,6 @@ TIMESTEP = range(min_timestep, max_timestep + 1)
 
 
 
-#number_of_timesteps=35
-# VARIABLES
 
 #"""
 xDividers={}
@@ -689,7 +687,9 @@ for i in AIRPORT:
 
 
 time_start = time.clock()
-if not ("pathModels" in globals()):
+
+debugModels=1
+if not ("pathModels" in globals()) or debugModels:
     pathModels = {}
     requestModels = {}
     fullModels = {}
@@ -698,6 +698,7 @@ if not ("pathModels" in globals()):
     x2 = {}
     x_dep2 = {}
     x_arr2 = {}
+    r2 = {}
     y2 = {}
     y_dep2 = {}
     y_arr2 = {}
@@ -711,10 +712,24 @@ if not ("pathModels" in globals()):
         pathModels[p] = cplex.Cplex()
         requestModels[p] = cplex.Cplex()
         fullModels[p] = cplex.Cplex()
-        pathModels[p].set_results_stream('reconst.rlog')
-        requestModels[p].set_results_stream('reconst.rlog')
-        fullModels[p].set_results_stream('reconst.rlog')
+        #pathModels[p].set_results_stream('reconst.rlog')
+        #requestModels[p].set_results_stream('reconst.rlog')
+        #fullModels[p].set_results_stream('reconst.rlog')
         
+        pathLines = []
+        pathNames = []
+        pathRhs = []
+        pathSenses = []
+        
+        requestLines = []
+        requestNames = []
+        requestRhs = []
+        requestSenses = []
+        
+        fullLines = []
+        fullNames = []
+        fullRhs = []
+        fullSenses = []
         
         tP[p] = range(plane_min_timestep[p],plane_max_timestep[p]+1)
         
@@ -726,20 +741,22 @@ if not ("pathModels" in globals()):
             for r in REQUEST:
                 for t in tR[r]:
                     x2[i,j,r,p,t] = "x#" + i + "_" + j + "_" + r + "_" + p + "_"+str(t)
-                    requestModels[p].variables.add(obj = [0.01 * TRIP[i,j]], names = [x2[i,j,r,p,t]], types = ["B"])
-                    fullModels[p].variables.add(obj = [0.01 * TRIP[i,j]], names = [x2[i,j,r,p,t]], types = ["B"])
+                    requestModels[p].variables.add( names = [x2[i,j,r,p,t]], types = ["B"])
+                    fullModels[p].variables.add( names = [x2[i,j,r,p,t]], types = ["B"])
         for r in REQUEST:
             for t in tR[r]:
                 x_dep2[r,p,t] = "x_dep#" + r + "_" + p + "_" + str(t)
                 requestModels[p].variables.add(names = [x_dep2[r,p,t]],  types = ["B"])
                 fullModels[p].variables.add(names = [x_dep2[r,p,t]],  types = ["B"])
-        
         for r in REQUEST:
             for t in tR[r]:
                 x_arr2[r,p,t] = "x_arr#" + r + "_" + p + "_" + str(t)
                 requestModels[p].variables.add(names = [x_arr2[r,p,t]], types = ["B"])
                 fullModels[p].variables.add(names = [x_arr2[r,p,t]], types = ["B"])
-        
+        for r in REQUEST:
+            r2[r,p] = "r_ass" + r + "_" + p
+            requestModels[p].variables.add(names = [r2[r,p]], types = ["B"])
+            fullModels[p].variables.add(names = [r2[r,p]], types = ["B"])
         
         
         
@@ -757,9 +774,9 @@ if not ("pathModels" in globals()):
             fullModels[p].variables.add(names = [y_dep2[p,t]], types = ["B"])
         for t in tP[p]:
             y_arr2[p,t] = "y_arr#" + p  + "_" + str(t)
-            pathModels[p].variables.add(names = [y_arr2[p,t]], lb = [0.0], ub = [1.0], types = ["B"])
-            requestModels[p].variables.add(names = [y_arr2[p,t]], lb = [0.0], ub = [1.0], types = ["B"])
-            fullModels[p].variables.add(names = [y_arr2[p,t]], lb = [0.0], ub = [1.0], types = ["B"])
+            pathModels[p].variables.add(names = [y_arr2[p,t]], types = ["B"])
+            requestModels[p].variables.add(names = [y_arr2[p,t]], types = ["B"])
+            fullModels[p].variables.add(names = [y_arr2[p,t]], types = ["B"])
         
         
         
@@ -777,6 +794,7 @@ if not ("pathModels" in globals()):
         for t in tP[p]:
             z_arr2[p,t] = "z_arr#" + p  + "_" +str(t)
             pathModels[p].variables.add(names = [z_arr2[p,t]], lb = [PLANE[p].arrival_min_fuel], ub = [PLANE[p].arrival_max_fuel], types = ["C"])
+            #pathModels[p].variables.add(names = [z_arr2[p,t]], lb = [0.0], ub = [PLANE[p].arrival_max_fuel], types = ["C"])
             fullModels[p].variables.add(names = [z_arr2[p,t]], lb = [PLANE[p].arrival_min_fuel], ub = [PLANE[p].arrival_max_fuel], types = ["C"])
         
         
@@ -786,17 +804,47 @@ if not ("pathModels" in globals()):
         #Plane must depart
         thevars = [y_dep2[p,t] for t in tP[p]]
         thecoefs = [1.0 for t in tP[p]]
-        pathModels[p].linear_constraints.add(names = [p+' departure'],lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [1.0])
-        requestModels[p].linear_constraints.add(names = [p+' departure'],lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [1.0])
-        fullModels[p].linear_constraints.add(names = [p+' departure'],lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [1.0])
+
+        
+        #pathModels[p].linear_constraints.add(names = [p+' departure'],lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [1.0])
+        #requestModels[p].linear_constraints.add(names = [p+' departure'],lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [1.0])
+        #fullModels[p].linear_constraints.add(names = [p+' departure'],lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [1.0])
+        
+        pathLines.append(cplex.SparsePair(thevars,thecoefs))
+        pathSenses.append("E")
+        pathRhs.append(1.0)
+        pathNames.append(p+' departure')
+        requestLines.append(cplex.SparsePair(thevars,thecoefs))
+        requestSenses.append("E")
+        requestRhs.append(1.0)
+        requestNames.append(p+' departure')
+        fullLines.append(cplex.SparsePair(thevars,thecoefs))
+        fullSenses.append("E")
+        fullRhs.append(1.0)
+        fullNames.append(p+' departure')
+        
+        
+        
         #Plane must arrive
         thevars = [y_arr2[p,t] for t in tP[p]]
         thecoefs = [1.0 for t in tP[p]]
-        pathModels[p].linear_constraints.add(names = [p+' arrival'],lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [1.0])
-        requestModels[p].linear_constraints.add(names = [p+' arrival'],lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [1.0])
-        fullModels[p].linear_constraints.add(names = [p+' arrival'],lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses=["E"], rhs=[1.0])
         
+        #pathModels[p].linear_constraints.add(names = [p+' arrival'],lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [1.0])
+        #requestModels[p].linear_constraints.add(names = [p+' arrival'],lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [1.0])
+        #fullModels[p].linear_constraints.add(names = [p+' arrival'],lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses=["E"], rhs=[1.0])
         
+        pathLines.append(cplex.SparsePair(thevars,thecoefs))
+        pathSenses.append("E")
+        pathRhs.append(1.0)
+        pathNames.append(p+' arrival')
+        requestLines.append(cplex.SparsePair(thevars,thecoefs))
+        requestSenses.append("E")
+        requestRhs.append(1.0)
+        requestNames.append(p+' arrival')
+        fullLines.append(cplex.SparsePair(thevars,thecoefs))
+        fullSenses.append("E")
+        fullRhs.append(1.0)
+        fullNames.append(p+' arrival')
         
         
         #Flow constraints for the planes
@@ -823,28 +871,64 @@ if not ("pathModels" in globals()):
                     thevars.append(y_arr2[p,t])
                     thecoefs += [-1.0]
                     
-                pathModels[p].linear_constraints.add(names = [ j+'_'+p+'_'+str(t)+ ' flow'],
-                                                 lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [0.0])
-                requestModels[p].linear_constraints.add(names = [ j+'_'+p+'_'+str(t)+ ' flow'],
-                                                 lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [0.0])
-                fullModels[p].linear_constraints.add(names = [ j+'_'+p+'_'+str(t)+ ' flow'],
-                                                 lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [0.0])
-                
+                #pathModels[p].linear_constraints.add(names = [ j+'_'+p+'_'+str(t)+ ' flow'],
+                #                                 lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [0.0])
+                #requestModels[p].linear_constraints.add(names = [ j+'_'+p+'_'+str(t)+ ' flow'],
+                #                                 lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [0.0])
+                #fullModels[p].linear_constraints.add(names = [ j+'_'+p+'_'+str(t)+ ' flow'],
+                #                                 lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [0.0])
+                pathLines.append(cplex.SparsePair(thevars,thecoefs))
+                pathSenses.append("E")
+                pathRhs.append(0.0)
+                pathNames.append( j+'_'+p+'_'+str(t)+ ' flow')
+                requestLines.append(cplex.SparsePair(thevars,thecoefs))
+                requestSenses.append("E")
+                requestRhs.append(0.0)
+                requestNames.append( j+'_'+p+'_'+str(t)+ ' flow')
+                fullLines.append(cplex.SparsePair(thevars,thecoefs))
+                fullSenses.append("E")
+                fullRhs.append(0.0)
+                fullNames.append( j+'_'+p+'_'+str(t)+ ' flow')
         
         
         
         # each assigned REQUEST must depart and arrive
-        #TODO: Assign rhs according to assignment (REMINDER)
         for r in REQUEST:
-            thevars = [x_dep2[r,p,t] for t in tR[r]]
-            thecoefs = [1.0 for t in tR[r]]
-            requestModels[p].linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [1.0])
-            fullModels[p].linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [1.0])
-            thevars = [x_arr2[r,p,t] for t in tR[r]]
-            thecoefs = [1.0 for t in tR[r]]
-            requestModels[p].linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [1.0])
-            fullModels[p].linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [1.0])
+            thevars = [ x_dep2[r,p,t] for t in tR[r] ]
+            thecoefs = [ 1.0 for t in tR[r] ]
+            
+            thevars += [ r2[r,p] ]
+            thecoefs += [ -1.0 ]
+            
+            #requestModels[p].linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [0.0])
+            #fullModels[p].linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [0.0])
+            
+            requestLines.append(cplex.SparsePair(thevars,thecoefs))
+            requestSenses.append("E")
+            requestRhs.append(0.0)
+            requestNames.append( r + 'request departure')
+            fullLines.append(cplex.SparsePair(thevars,thecoefs))
+            fullSenses.append("E")
+            fullRhs.append(0.0)
+            fullNames.append( r+'request departure')
+            
+            thevars = [ x_arr2[r,p,t] for t in tR[r] ]
+            thecoefs = [ 1.0 for t in tR[r] ]
+            
+            thevars += [ r2[r,p] ]
+            thecoefs += [ -1.0 ]
+            
+            #requestModels[p].linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [0.0])
+            #fullModels[p].linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [0.0])
         
+            requestLines.append(cplex.SparsePair(thevars,thecoefs))
+            requestSenses.append("E")
+            requestRhs.append(0.0)
+            requestNames.append( r + ' request arrival')
+            fullLines.append(cplex.SparsePair(thevars,thecoefs))
+            fullSenses.append("E")
+            fullRhs.append(0.0)
+            fullNames.append( r+'request arrival')
         
         
         
@@ -868,16 +952,21 @@ if not ("pathModels" in globals()):
                     thecoefs += [-1.0 for k in AIRPORT 
                                     if t+turnover_travel_timesteps[j,k,p] <=  tR[r][-1]]
         
-                    
                     if (j  ==  REQUEST[r].destination):
                         thevars.append(x_arr2[r,p,t])
                         thecoefs += [-1.0]
                     
-                    
-                    requestModels[p].linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [0.0])
-                    fullModels[p].linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [0.0])
+                    #requestModels[p].linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [0.0])
+                    #fullModels[p].linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [0.0])
     
-        
+                    requestLines.append(cplex.SparsePair(thevars,thecoefs))
+                    requestSenses.append("E")
+                    requestRhs.append(0.0)
+                    requestNames.append( r+'_'+j+'_'+str(t)+' flow')
+                    fullLines.append(cplex.SparsePair(thevars,thecoefs))
+                    fullSenses.append("E")
+                    fullRhs.append(0.0)
+                    fullNames.append( r+'_'+j+'_'+str(t)+' flow')
         
         
         
@@ -886,11 +975,19 @@ if not ("pathModels" in globals()):
             thevars = [ x2[i,j,r,p,t] for i,j in TRIP0 for t in tR[r] ]
             thecoefs = [ TRIP0[i,j]  for i,j in TRIP0 for t in tR[r] ]
             
-            requestModels[p].linear_constraints.add(names = [r+' max detour'],lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"],
-                                         rhs = [(1 + REQUEST[r].max_detour) * TRIP0[REQUEST[r].request_departure,REQUEST[r].request_arrival]])
-            fullModels[p].linear_constraints.add(names = [r+' max detour'],lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"],
-                                         rhs = [(1 + REQUEST[r].max_detour) * TRIP0[REQUEST[r].request_departure,REQUEST[r].request_arrival]])
-        
+            #requestModels[p].linear_constraints.add(names = [r+' max detour'],lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"],
+            #                             rhs = [(1 + REQUEST[r].max_detour) * TRIP0[REQUEST[r].request_departure,REQUEST[r].request_arrival]])
+            #fullModels[p].linear_constraints.add(names = [r+' max detour'],lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"],
+            #                             rhs = [(1 + REQUEST[r].max_detour) * TRIP0[REQUEST[r].request_departure,REQUEST[r].request_arrival]])
+            
+            requestLines.append(cplex.SparsePair(thevars,thecoefs))
+            requestSenses.append("L")
+            requestRhs.append((1 + REQUEST[r].max_detour) * TRIP0[REQUEST[r].request_departure,REQUEST[r].request_arrival])
+            requestNames.append( r+' detour')
+            fullLines.append(cplex.SparsePair(thevars,thecoefs))
+            fullSenses.append("L")
+            fullRhs.append((1 + REQUEST[r].max_detour) * TRIP0[REQUEST[r].request_departure,REQUEST[r].request_arrival])
+            fullNames.append( r+' detour')
         
         
         
@@ -904,10 +1001,17 @@ if not ("pathModels" in globals()):
                 thevars += [ x2[i,j,r,p,t] for r in REQUEST if t >= tR[r][0] and t <= tR[r][-1] ]
                 thecoefs += [ REQUEST[r].passengers  for r in REQUEST if t >= tR[r][0] and t <= tR[r][-1] ]
                 
-                requestModels[p].linear_constraints.add(names = [r+' seat limit'], lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [0.0])
-                fullModels[p].linear_constraints.add(names = [r+' seat limit'], lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [0.0])
+                #requestModels[p].linear_constraints.add( lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [0.0])
+                #fullModels[p].linear_constraints.add( lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [0.0])
         
-        
+                requestLines.append(cplex.SparsePair(thevars,thecoefs))
+                requestSenses.append("L")
+                requestRhs.append(0.0)
+                requestNames.append( i+'_'+j+'_'+str(t)+' seat limit')
+                fullLines.append(cplex.SparsePair(thevars,thecoefs))
+                fullSenses.append("L")
+                fullRhs.append(0.0)
+                fullNames.append( i+'_'+j+'_'+str(t)+' seat limit')
         
         
         
@@ -916,10 +1020,20 @@ if not ("pathModels" in globals()):
         for r in REQUEST:
             thevars = [ x2[i,j,r,p,t] for i,j in TRIP0 for t in tR[r] ]
             thecoefs = [ 1.0 for i,j in TRIP0 for t in tR[r] ]
-            requestModels[p].linear_constraints.add(names = [r+' stop limit'],lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [REQUEST[r].max_stops + 1])
-            fullModels[p].linear_constraints.add(names = [r+' stop limit'],lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [REQUEST[r].max_stops + 1])
-        
-        
+            
+            #requestModels[p].linear_constraints.add(names = [r+' stop limit'],lin_expr = [cplex.SparsePair(thevars,thecoefs)], 
+            #            senses = ["L"], rhs = [REQUEST[r].max_stops + 1])
+            #fullModels[p].linear_constraints.add(names = [r+' stop limit'],lin_expr = [cplex.SparsePair(thevars,thecoefs)], 
+            #            senses = ["L"], rhs = [REQUEST[r].max_stops + 1])
+            
+            requestLines.append(cplex.SparsePair(thevars,thecoefs))
+            requestSenses.append("L")
+            requestRhs.append(REQUEST[r].max_stops + 1)
+            requestNames.append( r+' stop limit')
+            fullLines.append(cplex.SparsePair(thevars,thecoefs))
+            fullSenses.append("L")
+            fullRhs.append(REQUEST[r].max_stops + 1)
+            fullNames.append( r+' stop limit')
         
         
         
@@ -933,10 +1047,18 @@ if not ("pathModels" in globals()):
                 thevars += [ z2[i,j,p,t] ]
                 thecoefs += [ 1.0 ]
                 
-                pathModels[p].linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [0.0])
-                fullModels[p].linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [0.0])
+                #pathModels[p].linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [0.0])
+                #fullModels[p].linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [0.0])
         
-        
+                pathLines.append(cplex.SparsePair(thevars,thecoefs))
+                pathSenses.append("L")
+                pathRhs.append(0.0)
+                pathNames.append( i+'_'+j+'_'+str(t)+ ' fuel bound')
+
+                fullLines.append(cplex.SparsePair(thevars,thecoefs))
+                fullSenses.append("L")
+                fullRhs.append(0.0)
+                fullNames.append( i+'_'+j+'_'+str(t)+ ' fuel bound')
         
         
         
@@ -956,22 +1078,49 @@ if not ("pathModels" in globals()):
                 
                 thevars += [ z2[j,k,p,t+turnover_travel_timesteps[j,k,p]] for k in AIRPORT 
                                 if t+turnover_travel_timesteps[j,k,p] <=  tP[p][-1] ]
-                thecoefs += [ -1.0 for k in AIRPORT
+                thecoefs += [ -1.0 for k in AIRPORT 
                                 if t+turnover_travel_timesteps[j,k,p] <=  tP[p][-1] ]
                 
-                thevars += [ y2[j,k,p,t+turnover_travel_timesteps[j,k,p]] for k in AIRPORT
+                thevars += [ y2[j,k,p,t+turnover_travel_timesteps[j,k,p]] for k in AIRPORT 
                                 if t+turnover_travel_timesteps[j,k,p] <=  tP[p][-1] ]
-                thecoefs += [ -fuelconsumption[j,k,p] for k in AIRPORT
+                thecoefs += [ -fuelconsumption[j,k,p] for k in AIRPORT 
                                 if t+turnover_travel_timesteps[j,k,p] <=  tP[p][-1] ]
                 
                 if (j  ==  PLANE[p].destination):
                     thevars.append(z_arr2[p,t])
                     thecoefs += [-1.0]
+                
+                if AIRPORT[j].fuel[PLANE[p].required_fueltype] == '0':    
+                    #pathModels[p].linear_constraints.add(names = [ j+'_'+p+'_'+str(t)+ 'fuel flow'],
+                    #                                 lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [0.0])
+                    #fullModels[p].linear_constraints.add(names = [ j+'_'+p+'_'+str(t)+ 'fuel flow'],
+                    #                                 lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [0.0])
                     
-                pathModels[p].linear_constraints.add(names = [ j+'_'+p+'_'+str(t)+ 'fuel flow'],
-                                                 lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [0.0])
-                fullModels[p].linear_constraints.add(names = [ j+'_'+p+'_'+str(t)+ 'fuel flow'],
-                                                 lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [0.0])
+                    pathLines.append(cplex.SparsePair(thevars,thecoefs))
+                    pathSenses.append("E")
+                    pathRhs.append(0.0)
+                    pathNames.append( j+'_'+str(t)+ ' fuel flow')
+    
+                    fullLines.append(cplex.SparsePair(thevars,thecoefs))
+                    fullSenses.append("E")
+                    fullRhs.append(0.0)
+                    fullNames.append( j+'_'+str(t)+ ' fuel flow')
+                else:
+                    #pathModels[p].linear_constraints.add(names = [ j+'_'+p+'_'+str(t)+ 'fuel flow'],
+                    #                                 lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [0.0])
+                    #fullModels[p].linear_constraints.add(names = [ j+'_'+p+'_'+str(t)+ 'fuel flow'],
+                    #                                 lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [0.0])
+                    
+                    pathLines.append(cplex.SparsePair(thevars,thecoefs))
+                    pathSenses.append("L")
+                    pathRhs.append(0.0)
+                    pathNames.append( j+'_'+str(t)+ ' fuel flow refuel')
+    
+                    fullLines.append(cplex.SparsePair(thevars,thecoefs))
+                    fullSenses.append("L")
+                    fullRhs.append(0.0)
+                    fullNames.append( j+'_'+str(t)+ ' fuel flow refuel')
+                    
         
         
         
@@ -989,7 +1138,16 @@ if not ("pathModels" in globals()):
                 thecoefs += [REQUEST[r].passengers for r in REQUEST if t >= tR[r][0] and t <= tR[r][-1] ]
                 
     
-                fullModels[p].linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [0.0])           
+                #fullModels[p].linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [0.0])  
+                
+                fullLines.append(cplex.SparsePair(thevars,thecoefs))
+                fullSenses.append("L")
+                fullRhs.append(0.0)
+                fullNames.append( i+'_'+j+'_'+str(t)+ ' weight limit')
+        print "Adding constraints to the fully expanded models"         
+        pathModels[p].linear_constraints.add(names=pathNames,lin_expr = pathLines,senses = pathSenses, rhs = pathRhs)
+        requestModels[p].linear_constraints.add(names=requestNames,lin_expr = requestLines,senses = requestSenses, rhs = requestRhs)
+        fullModels[p].linear_constraints.add(names=fullNames,lin_expr = fullLines,senses = fullSenses, rhs = fullRhs)
 
 time_finished = time.clock()
 
@@ -1010,12 +1168,13 @@ while(mipSolved == 0):
             for p in PLANE:
                 for ID1,intervalIter1 in xDividers[i,p].ids.iteritems():
                     for ID2,intervalIter2 in xDividers[j,p].ids.iteritems():
-                        if doTheyIntersect(intervalIter1,shiftList(intervalIter2,-turnover_travel_timesteps[i,j,p])):
-                            x[i,j,r,p,ID1,ID2] = "x#" + i + "_" + j + "_" + r + "_" + p + "_"+ID1+ "_"+ID2
-                            ub=1
-                            if max(intervalIter1) < earliest_departure_timesteps[r] or min(intervalIter2) > latest_arrival_timesteps[r]:
-                                ub=0
-                            model.variables.add(obj = [0.01 * TRIP[i,j]], names = [x[i,j,r,p,ID1,ID2]], lb = [0], ub = [ub], types = ["B"])
+                        if not(i == j and ID1 ==ID2):
+                            if doTheyIntersect(intervalIter1,shiftList(intervalIter2,-turnover_travel_timesteps[i,j,p])):
+                                x[i,j,r,p,ID1,ID2] = "x#" + i + "_" + j + "_" + r + "_" + p + "_"+ID1+ "_"+ID2
+                                ub=1
+                                if max(intervalIter1) < earliest_departure_timesteps[r] or min(intervalIter2) > latest_arrival_timesteps[r]:
+                                    ub=0
+                                model.variables.add(obj = [0.01 * TRIP[i,j]], names = [x[i,j,r,p,ID1,ID2]], lb = [0], ub = [ub], types = ["B"])
     x_dep = {}
     for r in REQUEST:
         for p in PLANE:
@@ -1038,9 +1197,10 @@ while(mipSolved == 0):
         for p in PLANE:
             for ID1,intervalIter1 in yDividers[i,p].ids.iteritems():
                 for ID2,intervalIter2 in yDividers[j,p].ids.iteritems():
-                    if doTheyIntersect(intervalIter1,shiftList(intervalIter2,-turnover_travel_timesteps[i,j,p])):
-                        y[i,j,p,ID1,ID2] = "y#" + i + "_" + j + "_" + p + "_"+ ID1+ "_"+ID2
-                        model.variables.add(obj = [travelcost[i,j,p]], names = [y[i,j,p,ID1,ID2]], lb = [0], types = ["I"])
+                    if not(i == j and ID1 ==ID2):
+                        if doTheyIntersect(intervalIter1,shiftList(intervalIter2,-turnover_travel_timesteps[i,j,p])):
+                            y[i,j,p,ID1,ID2] = "y#" + i + "_" + j + "_" + p + "_"+ ID1+ "_"+ID2
+                            model.variables.add(obj = [travelcost[i,j,p]], names = [y[i,j,p,ID1,ID2]], lb = [0], types = ["I"])
     y_dep = {}
     for p in PLANE:
         for ID in yDividers[PLANE[p].origin,p].ids:
@@ -1062,9 +1222,10 @@ while(mipSolved == 0):
         for p in PLANE:
             for ID1,intervalIter1 in zDividers[i,p].ids.iteritems():
                 for ID2,intervalIter2 in zDividers[j,p].ids.iteritems():
-                    if doTheyIntersect(intervalIter1,shiftList(intervalIter2,-turnover_travel_timesteps[i,j,p])):
-                        z[i,j,p,ID1,ID2] = "z#" + i + "_" + j + "_" + p  + "_" + ID1+ "_"+ID2
-                        model.variables.add(names = [z[i,j,p,ID1,ID2]], lb = [0], ub = [PLANE[p].max_fuel], types = ["C"])
+                    if not(i == j and ID1 ==ID2):
+                        if doTheyIntersect(intervalIter1,shiftList(intervalIter2,-turnover_travel_timesteps[i,j,p])):
+                            z[i,j,p,ID1,ID2] = "z#" + i + "_" + j + "_" + p  + "_" + ID1+ "_"+ID2
+                            model.variables.add(names = [z[i,j,p,ID1,ID2]], lb = [0], ub = [PLANE[p].max_fuel], types = ["C"])
     z_dep = {}
     for p in PLANE:
         for ID in zDividers[PLANE[p].origin,p].ids:
@@ -1095,10 +1256,10 @@ while(mipSolved == 0):
     #not too long tours cutting plane
     for p in PLANE:
         thevars = [y[i,j,p,ID1,ID2] for i,j in TRIP for ID1,intervalIter1 in yDividers[i,p].ids.iteritems() 
-                    for ID2,intervalIter2 in yDividers[j,p].ids.iteritems()  
+                    for ID2,intervalIter2 in yDividers[j,p].ids.iteritems() if not(i == j and ID1 == ID2)
                     if doTheyIntersect(intervalIter1,shiftList(intervalIter2,-turnover_travel_timesteps[i,j,p]))]
         thecoefs = [turnover_travel_timesteps[i,j,p] for i,j in TRIP for ID1,intervalIter1 in yDividers[i,p].ids.iteritems()  
-                    for ID2,intervalIter2 in yDividers[j,p].ids.iteritems()  
+                    for ID2,intervalIter2 in yDividers[j,p].ids.iteritems() if not(i == j and ID1 == ID2)
                     if doTheyIntersect(intervalIter1,shiftList(intervalIter2,-turnover_travel_timesteps[i,j,p]))]
         model.linear_constraints.add(names = [p+' length cutting plane'],lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"],
                                      rhs = [plane_max_timestep[p]-plane_min_timestep[p]])
@@ -1219,16 +1380,17 @@ while(mipSolved == 0):
         for p in PLANE:
             for ID1,intervalIter1 in xDividers[i,p].ids.iteritems():
                 for ID2,intervalIter2 in xDividers[j,p].ids.iteritems():
-                    if doTheyIntersect(intervalIter1,shiftList(intervalIter2,-turnover_travel_timesteps[i,j,p])):    
-                        
-                        thevars = [y[i,j,p,ID3,ID4] for ID3,intervalIter3 in yDividers[i,p].ids.iteritems() for ID4,intervalIter4 in yDividers[j,p].ids.iteritems()
-                                                        if doTheyIntersect(intervalIter1,intervalIter3) and doTheyIntersect(intervalIter2,intervalIter4)]
-                        thecoefs = [-PLANE[p].seats for ID3,intervalIter3 in yDividers[i,p].ids.iteritems() for ID4,intervalIter4 in yDividers[j,p].ids.iteritems()
-                                                        if doTheyIntersect(intervalIter1,intervalIter3) and doTheyIntersect(intervalIter2,intervalIter4)]
-                        thevars += [x[i,j,r,p,ID1,ID2] for r in REQUEST]
-                        thecoefs += [REQUEST[r].passengers for r in REQUEST]
-                        
-                        model.linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [0.0])
+                    if not(i == j and ID1 == ID2):
+                        if doTheyIntersect(intervalIter1,shiftList(intervalIter2,-turnover_travel_timesteps[i,j,p])):    
+                            
+                            thevars = [y[i,j,p,ID3,ID4] for ID3,intervalIter3 in yDividers[i,p].ids.iteritems() for ID4,intervalIter4 in yDividers[j,p].ids.iteritems()
+                                                            if doTheyIntersect(intervalIter1,intervalIter3) and doTheyIntersect(intervalIter2,intervalIter4)]
+                            thecoefs = [-PLANE[p].seats for ID3,intervalIter3 in yDividers[i,p].ids.iteritems() for ID4,intervalIter4 in yDividers[j,p].ids.iteritems()
+                                                            if doTheyIntersect(intervalIter1,intervalIter3) and doTheyIntersect(intervalIter2,intervalIter4)]
+                            thevars += [x[i,j,r,p,ID1,ID2] for r in REQUEST ]
+                            thecoefs += [REQUEST[r].passengers for r in REQUEST]
+                            
+                            model.linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [0.0])
     
     
     
@@ -1251,16 +1413,17 @@ while(mipSolved == 0):
         for p in PLANE:
             for ID1,intervalIter1 in yDividers[i,p].ids.iteritems():
                 for ID2,intervalIter2 in yDividers[j,p].ids.iteritems():
-                    if doTheyIntersect(intervalIter1,shiftList(intervalIter2,-turnover_travel_timesteps[i,j,p])):    
-                        thevars = [y[i,j,p,ID1,ID2]]
-                        thecoefs = [-max_trip_fuel[i,j,p] ]
-                        
-                        thevars += [z[i,j,p,ID1,ID2] for ID3,intervalIter3 in zDividers[i,p].ids.iteritems() for ID4,intervalIter4 in zDividers[j,p].ids.iteritems()
-                                                        if doTheyIntersect(intervalIter1,intervalIter3) and doTheyIntersect(intervalIter2,intervalIter4)]
-                        thecoefs += [1.0 for ID3,intervalIter3 in zDividers[i,p].ids.iteritems() for ID4,intervalIter4 in zDividers[j,p].ids.iteritems()
-                                                        if doTheyIntersect(intervalIter1,intervalIter3) and doTheyIntersect(intervalIter2,intervalIter4)]
-                        
-                        model.linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [0.0])
+                    if doTheyIntersect(intervalIter1,shiftList(intervalIter2,-turnover_travel_timesteps[i,j,p])):   
+                        if not(i == j and ID1 == ID2):
+                            thevars = [y[i,j,p,ID1,ID2]]
+                            thecoefs = [-max_trip_fuel[i,j,p] ]
+                            
+                            thevars += [z[i,j,p,ID1,ID2] for ID3,intervalIter3 in zDividers[i,p].ids.iteritems() for ID4,intervalIter4 in zDividers[j,p].ids.iteritems()
+                                                            if doTheyIntersect(intervalIter1,intervalIter3) and doTheyIntersect(intervalIter2,intervalIter4)]
+                            thecoefs += [1.0 for ID3,intervalIter3 in zDividers[i,p].ids.iteritems() for ID4,intervalIter4 in zDividers[j,p].ids.iteritems()
+                                                            if doTheyIntersect(intervalIter1,intervalIter3) and doTheyIntersect(intervalIter2,intervalIter4)]
+                            
+                            model.linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [0.0])
     
     
     
@@ -1274,8 +1437,8 @@ while(mipSolved == 0):
                 
                 for i in AIRPORT:
                     for ID2,intervalIter2 in zDividers[i,p].ids.iteritems():
-                        if doTheyIntersect(intervalIter2,shiftList(intervalIter1,-turnover_travel_timesteps[i,j,p])):  
-                            if (i,j) in TRIP0:
+                        if doTheyIntersect(intervalIter2,shiftList(intervalIter1,-turnover_travel_timesteps[i,j,p])): 
+                            if not(i == j and ID1 ==ID2):
                                 thevars.append(z[i,j,p,ID2,ID1])
                                 thecoefs.append(1.0)
                 
@@ -1285,8 +1448,8 @@ while(mipSolved == 0):
     
                 for k in AIRPORT:
                     for ID2,intervalIter2 in zDividers[k,p].ids.iteritems():
-                        if (j,k) in TRIP0:
-                            if doTheyIntersect(intervalIter1,shiftList(intervalIter2,-turnover_travel_timesteps[j,k,p])):  
+                        if doTheyIntersect(intervalIter1,shiftList(intervalIter2,-turnover_travel_timesteps[j,k,p])):  
+                            if not(j == k and ID1 ==ID2):
                                 thevars.append(z[j,k,p,ID1,ID2])
                                 thecoefs.append(-1.0)
     
@@ -1310,21 +1473,22 @@ while(mipSolved == 0):
         for p in PLANE:
             for ID1,intervalIter1 in xDividers[i,p].ids.iteritems():
                 for ID2,intervalIter2 in xDividers[j,p].ids.iteritems():
-                    if doTheyIntersect(intervalIter1,shiftList(intervalIter2,-turnover_travel_timesteps[i,j,p])):    
-                        thevars = [y[i,j,p,ID3,ID4] for ID3,intervalIter3 in yDividers[i,p].ids.iteritems() for ID4,intervalIter4 in yDividers[j,p].ids.iteritems()
-                                                        if doTheyIntersect(intervalIter1,intervalIter3) and doTheyIntersect(intervalIter2,intervalIter4)]
-                        thecoefs = [-max_trip_payload[i,j,p] for ID3,intervalIter3 in yDividers[i,p].ids.iteritems() for ID4,intervalIter4 in yDividers[j,p].ids.iteritems()
-                                                        if doTheyIntersect(intervalIter1,intervalIter3) and doTheyIntersect(intervalIter2,intervalIter4)]
-                        
-                        thevars += [z[i,j,p,ID3,ID4] for ID3,intervalIter3 in yDividers[i,p].ids.iteritems() for ID4,intervalIter4 in yDividers[j,p].ids.iteritems()
-                                                        if doTheyIntersect(intervalIter1,intervalIter3) and doTheyIntersect(intervalIter2,intervalIter4)]
-                        thecoefs += [1.0 for ID3,intervalIter3 in yDividers[i,p].ids.iteritems() for ID4,intervalIter4 in yDividers[j,p].ids.iteritems()
-                                                        if doTheyIntersect(intervalIter1,intervalIter3) and doTheyIntersect(intervalIter2,intervalIter4)]
-                        
-                        thevars += [x[i,j,r,p,ID1,ID2] for r in REQUEST]
-                        thecoefs += [REQUEST[r].passengers for r in REQUEST]
-                        
-                        model.linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [0.0])           
+                    if not(i == j and ID1 == ID2):
+                        if doTheyIntersect(intervalIter1,shiftList(intervalIter2,-turnover_travel_timesteps[i,j,p])):    
+                            thevars = [y[i,j,p,ID3,ID4] for ID3,intervalIter3 in yDividers[i,p].ids.iteritems() for ID4,intervalIter4 in yDividers[j,p].ids.iteritems()
+                                                            if doTheyIntersect(intervalIter1,intervalIter3) and doTheyIntersect(intervalIter2,intervalIter4)]
+                            thecoefs = [-max_trip_payload[i,j,p] for ID3,intervalIter3 in yDividers[i,p].ids.iteritems() for ID4,intervalIter4 in yDividers[j,p].ids.iteritems()
+                                                            if doTheyIntersect(intervalIter1,intervalIter3) and doTheyIntersect(intervalIter2,intervalIter4)]
+                            
+                            thevars += [z[i,j,p,ID3,ID4] for ID3,intervalIter3 in yDividers[i,p].ids.iteritems() for ID4,intervalIter4 in yDividers[j,p].ids.iteritems()
+                                                            if doTheyIntersect(intervalIter1,intervalIter3) and doTheyIntersect(intervalIter2,intervalIter4)]
+                            thecoefs += [1.0 for ID3,intervalIter3 in yDividers[i,p].ids.iteritems() for ID4,intervalIter4 in yDividers[j,p].ids.iteritems()
+                                                            if doTheyIntersect(intervalIter1,intervalIter3) and doTheyIntersect(intervalIter2,intervalIter4)]
+                            
+                            thevars += [x[i,j,r,p,ID1,ID2] for r in REQUEST]
+                            thecoefs += [REQUEST[r].passengers for r in REQUEST]
+                            
+                            model.linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [0.0])           
     
     
     
@@ -1388,4 +1552,15 @@ for key,val in x_arr.iteritems():
     valStore=solutionValues[name2idx[val]]
     if valStore > 0.5:
         print(val+" %f" % valStore)
-
+for key,val in z.iteritems():
+    valStore=solutionValues[name2idx[val]]
+    if valStore > 0.5:
+        print(val+" %f" % valStore)
+for key,val in z_arr.iteritems():
+    valStore=solutionValues[name2idx[val]]
+    if valStore > 0.5:
+        print(val+" %f" % valStore)
+for key,val in z_dep.iteritems():
+    valStore=solutionValues[name2idx[val]]
+    if valStore > 0.5:
+        print(val+" %f" % valStore)
