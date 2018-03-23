@@ -93,15 +93,15 @@ def breakPath(path,start_time,end_time,breakX = 0):
         pathLength+=turnover_travel_timesteps[path[i],path[i+1],p]
     prevPath=start_time
     for i in range(len(path)):
-        iters=1
+        iters=0
         breakPoint=prevPath+iters*pathLength - 1
-        
         while (breakPoint < end_time):
-            yDividers[path[i],p].addDivider([breakPoint])
-            zDividers[path[i],p].addDivider([breakPoint])
-            
-            if breakX:
-                xDividers[path[i],p].addDivider([breakPoint])
+            if breakPoint > start_time:
+                yDividers[path[i],p].addDivider([breakPoint])
+                zDividers[path[i],p].addDivider([breakPoint])
+                
+                if breakX:
+                    xDividers[path[i],p].addDivider([breakPoint])
             iters += 1
             breakPoint=prevPath+iters*pathLength - 1
                
@@ -193,47 +193,32 @@ for p in PLANE:
         for path in paths[p]:
             if path[0]!=PLANE[p].origin and path[0]==path[-1]:#condition for a disconnected cycle
                 breakPath(path,tP[p][0],tP[p][-1])
+        break
         
-    #Check if path can be flown in time
-    if flyTime[p] > latestArr-earliestDep-0.0001:
-        for path in paths[p]:
-            pathLength=0
-            for i in range(len(path)-1):
-                pathLength+=turnover_travel_timesteps[path[i],path[i+1],p]
-                
-            prevPath=earliestDep
-            for i in range(len(path)):
-                LOP=[prevPath-1+m*pathLength for m in range(int(number_of_timesteps) % int(pathLength)) 
-                if prevPath-1+m*pathLength <= number_of_timesteps and prevPath-1+m*pathLength>0]
-                if LOP != []:
-                    yDividers[path[i],p].addDivider(LOP,number_of_timesteps)
-                    yDividers[path[i],p].addDivider([1],number_of_timesteps)
-                    for r in REQUEST:
-                        xDividers[path[i],r,p].addDivider(LOP,number_of_timesteps)
-                        xDividers[path[i],r,p].addDivider([1],number_of_timesteps)
-                if i < len(path)-1:
-                    prevPath+=turnover_travel_timesteps[path[i],path[i+1],p]
-        break#This break is to go back to timefree
-    
-    
-
     if paths[p] == []:
         continue
+    
     for i,j in TRIP0:
         if pathHasArc(paths[p][0],[i,j]):
-            pathModels[p].variables.set_upper_bounds( [(y2[i,j,p,t],1.0) for t in tP[p]] )
-            requestModels[p].variables.set_upper_bounds( [(y2[i,j,p,t],1.0) for t in tP[p]] )
-            fullModels[p].variables.set_upper_bounds( [(y2[i,j,p,t],1.0) for t in tP[p]] )
+            pathModels[p].variables.set_upper_bounds( [(y2[i,j,p],1.0)] )
+            requestModels[p].variables.set_upper_bounds( [(y2[i,j,p],1.0) ] )
+            fullModels[p].variables.set_upper_bounds( [(y2[i,j,p],1.0) ] )
+            pathModels[p].variables.set_lower_bounds( [(y2[i,j,p],1.0)] )
+            requestModels[p].variables.set_lower_bounds( [(y2[i,j,p],1.0) ] )
+            fullModels[p].variables.set_lower_bounds( [(y2[i,j,p],1.0) ] )
         else:
-            pathModels[p].variables.set_upper_bounds( [(y2[i,j,p,t],0.0) for t in tP[p]] )
-            requestModels[p].variables.set_upper_bounds( [(y2[i,j,p,t],0.0) for t in tP[p]] )
-            fullModels[p].variables.set_upper_bounds( [(y2[i,j,p,t],0.0) for t in tP[p]] )
+            pathModels[p].variables.set_upper_bounds( [(y2[i,j,p],0.0)] )
+            requestModels[p].variables.set_upper_bounds( [(y2[i,j,p],0.0) ] )
+            fullModels[p].variables.set_upper_bounds( [(y2[i,j,p],0.0) ] )
+            pathModels[p].variables.set_lower_bounds( [(y2[i,j,p],0.0)] )
+            requestModels[p].variables.set_lower_bounds( [(y2[i,j,p],0.0) ] )
+            fullModels[p].variables.set_lower_bounds( [(y2[i,j,p],0.0) ] )
     
      
     pathModels[p].solve()
-    continue
     if not pathModels[p].solution.is_primal_feasible():
         breakPath(paths[p][0],tP[p][0],tP[p][-1])
+        print "plane path infeasible"
         break
     
     
@@ -247,32 +232,37 @@ for p in PLANE:
         
     for r in REQUEST:
         assignedRequests[p][r] = 0
-        
+    
+    xString = {}
     #find assigned requests and set arcs
     for key,val in x.iteritems():
         if key[3]==p:
             valStore=solutionValues[name2idx[val]]
             if valStore > 0.1:
-                assignedRequests[p][r] = 1
+                if assignedRequests[p][key[2]] == 0:
+                    xString[key[2]]=[]
+                assignedRequests[p][key[2]] = 1
                 requestArcs[key[0],key[1]] = 1
+                if key[0]!=key[1]:
+                    xString[key[2]]+=["x#" + key[0] + "_" + key[1] + "_" + key[2] + "_" + key[3]]
     
+    for r in assignedRequests[p]:
+        if assignedRequests[p][r]:
+            xPaths[p,r]=solToPaths(xString[r])
     
     for r,assigned in assignedRequests[p].iteritems():
-        for i,j in TRIP0:
-            requestModels[p].variables.set_upper_bounds( [(x2[i,j,r,p,t],requestArcs[i,j] * assigned) for t in tR[r]])
-            fullModels[p].variables.set_upper_bounds( [(x2[i,j,r,p,t],requestArcs[i,j] * assigned) for t in tR[r]])
-            
-            requestModels[p].variables.set_lower_bounds( [(x2[i,j,r,p,t],requestArcs[i,j] * assigned) for t in tR[r]])
-            fullModels[p].variables.set_lower_bounds( [(x2[i,j,r,p,t],requestArcs[i,j] * assigned) for t in tR[r]])
         requestModels[p].variables.set_upper_bounds( [(r2[r,p], assigned)])
         fullModels[p].variables.set_upper_bounds( [(r2[r,p], assigned)])
+        requestModels[p].variables.set_lower_bounds( [(r2[r,p], assigned)])
+        fullModels[p].variables.set_lower_bounds( [(r2[r,p], assigned)])
     
     
     requestModels[p].solve()
-    if not pathModels[p].solution.is_primal_feasible():
+    if not requestModels[p].solution.is_primal_feasible():
         for r,assigned in assignedRequests[p].iteritems():
             if assigned:
-                breakPath(xPaths[p][0],tR[r][0],tR[r][1],breakX=1)
+                breakPath(xPaths[p,r][0],tP[p][0],tP[p][-1],breakX=1)
+        print "Could not assign requests to the plane path of " + p
         break
     
     
@@ -281,9 +271,19 @@ for p in PLANE:
     if not fullModels[p].solution.is_primal_feasible():
         for r,assigned in assignedRequests[p].iteritems():
             if assigned:
-                breakPath(xPaths[p][0])
+                breakPath(xPaths[p,r][0],tP[p][0],tP[p][-1],breakX=1)
+        print "Could not assign requests and fuel to plane path of " + p
         break       
     
-    
+    if p == '0':
+        solutionValues2=fullModels[p].solution.get_values()
+        idx2name2 = { j : n for j, n in enumerate(fullModels[p].variables.get_names()) }
+        name2idx2 = { n : j for j, n in enumerate(fullModels[p].variables.get_names()) }
+        name2solutionValue2 = { n : solutionValues2[j] for j, n in enumerate(fullModels[p].variables.get_names()) }
+        for key,val in x2.iteritems():
+            if key[3]=='0':
+                valStore=solutionValues2[name2idx2[val]]
+                if valStore > 0.5:
+                    print(val+" %f" %valStore)    
 print(flyTime)
 print(paths)
