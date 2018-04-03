@@ -123,6 +123,7 @@ assignedRequests = {}
 
 
 for p in PLANE:
+    
     print('Checking PLANE ' + p)
     
     assignedRequests[p] = {}
