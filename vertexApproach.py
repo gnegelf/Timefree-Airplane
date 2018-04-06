@@ -681,7 +681,7 @@ for i in AIRPORT:
             if not earliest_departure_timesteps[r] in startTimes[i]:
                 startTimes[i].append(earliest_departure_timesteps[r])
     startTimes[i] = sorted(startTimes[i])
-
+    
 
 
 #"""
@@ -690,12 +690,16 @@ if not "yDividers" in globals() or restart:
     for i in AIRPORT:
         for p in PLANE:
             xDividers[i,p]=DIVIDERCOLLECTION(plane_min_timestep[p],plane_max_timestep[p]+1)
+            for t in startTimes[i]:
+                xDividers[i,p].addDivider([t])
     
     
     yDividers={}
     for i in AIRPORT:
         for p in PLANE:
             yDividers[i,p]=DIVIDERCOLLECTION(plane_min_timestep[p],plane_max_timestep[p]+1)
+            for t in startTimes[i]:
+                yDividers[i,p].addDivider([t])
     
     
     zDividers={}
@@ -703,10 +707,11 @@ if not "yDividers" in globals() or restart:
     for i in AIRPORT:
         for p in PLANE:
             zDividers[i,p]=DIVIDERCOLLECTION(plane_min_timestep[p],plane_max_timestep[p]+1)
+            for t in startTimes[i]:
+                zDividers[i,p].addDivider([t])
 #"""
 
-
-
+    
 
 
 
@@ -1260,35 +1265,56 @@ time_finished = time.clock()
 if restart:
     oldObjective=0
 
+
+
 #main loop for creating sequence of loops
 mipSolved = 0
 while(mipSolved == 0):
     
     model = cplex.Cplex()
-    
+    xStartTimeIds = {}
+    yStartTimeIds = {}
+    zStartTimeIds = {}
+    for p in PLANE:
+        for i in AIRPORT:
+            xStartTimeIds[i,p] = { t:xDividers[i,p].findId(t) for t in startTimes[i] }
+            yStartTimeIds[i,p] = { t:yDividers[i,p].findId(t) for t in startTimes[i] }
+            zStartTimeIds[i,p] = { t:zDividers[i,p].findId(t) for t in startTimes[i] }
     
     #request variables
     x = {}
-    for i,j in TRIP:
+    for i,j in TRIP0:
         for r in REQUEST:
             for p in PLANE:
-                if i != j:
-                    for ID1,intervalIter1 in xDividers[i,p].ids.iteritems():
-                        for ID2,intervalIter2 in xDividers[j,p].ids.iteritems():
-                            if doTheyIntersect(intervalIter1,shiftList(intervalIter2,-turnover_travel_timesteps[i,j,p])):
-                                x[i,j,r,p,ID1,ID2] = "x#" + i + "_" + j + "_" + r + "_" + p + "_"+ID1+ "_"+ID2
-                                ub=1
-                                if (max(intervalIter1) < earliest_departure_timesteps[r] 
-                                     or min(intervalIter2) > latest_arrival_timesteps[r]):
-                                    ub=0
-                                model.variables.add(obj = [0.0001], names = [x[i,j,r,p,ID1,ID2]], lb = [0], ub = [ub], types = ["B"])
-                else:
-                    for ID1,intervalIter1 in xDividers[i,p].ids.iteritems():
-                        x[i,j,r,p,ID1,ID2] = "x#" + i + "_" + j + "_" + r + "_" + p + "_"+ID1+ "_"+ID2
-                        ub=1
-                        if max(intervalIter1) < earliest_departure_timesteps[r] or min(intervalIter2) > latest_arrival_timesteps[r]:
-                            ub=0
-                        model.variables.add(obj = [0.0001], names = [x[i,j,r,p,ID1,ID2]], lb = [0], ub = [ub], types = ["B"])
+                for ID1,intervalIter1 in xDividers[i,p].ids.iteritems():
+                    for ID2,intervalIter2 in xDividers[j,p].ids.iteritems():
+                        if doTheyIntersect(intervalIter1,shiftList(intervalIter2,-turnover_travel_timesteps[i,j,p])):
+                            x[i,j,r,p,ID1,ID2] = "x#" + i + "_" + j + "_" + r + "_" + p + "_"+ID1+ "_"+ID2
+                            ub=1
+                            if (max(intervalIter1) < earliest_departure_timesteps[r] 
+                                 or min(intervalIter2) > latest_arrival_timesteps[r]):
+                                ub=0
+                            model.variables.add(obj = [0.0001], names = [x[i,j,r,p,ID1,ID2]], lb = [0], ub = [ub], types = ["B"])
+    xPredecessorIds = {}
+    xSuccessorIds = {}
+    for i in AIRPORT:
+        for p in PLANE:
+            xSuccessorIds[i,p] = {}
+            xPredecessorIds[i,p] = { ID:[] for t,ID in xStartTimeIds[i,p].iteritems() }
+            for ID1,intervalIter1 in xDividers[i,p].ids.iteritems():
+                ID2=-1
+                for depTime in startTimes[i]:
+                    if min(intervalIter1) < depTime:
+                        ID2 = xDividers[i,p].findId(depTime)
+                if ID2 == -1:
+                    continue
+                xSuccessorIds[i,p][ID1] = ID2
+                xPredecessorIds[i,p][ID2].append(ID1)
+                for r in REQUEST:
+                    x[i,i,r,p,ID1,ID2] = "x#" + i +  "_" + i + "_" + r + "_" + p + "_"+ID1+ "_"+ID2
+                    
+                    ub=1
+                    model.variables.add(obj = [0.0001], names = [x[i,i,r,p,ID1,ID2]], lb = [0], ub = [ub], types = ["B"])
                             
     x_dep = {}
     for r in REQUEST:
@@ -1308,7 +1334,7 @@ while(mipSolved == 0):
     
     #plane tour variables
     y = {}
-    for i,j in TRIP:
+    for i,j in TRIP0:
         for p in PLANE:
             for ID1,intervalIter1 in yDividers[i,p].ids.iteritems():
                 for ID2,intervalIter2 in yDividers[j,p].ids.iteritems():
@@ -1316,6 +1342,24 @@ while(mipSolved == 0):
                         if doTheyIntersect(intervalIter1,shiftList(intervalIter2,-turnover_travel_timesteps[i,j,p])):
                             y[i,j,p,ID1,ID2] = "y#" + i + "_" + j + "_" + p + "_"+ ID1+ "_"+ID2
                             model.variables.add(obj = [travelcost[i,j,p]], names = [y[i,j,p,ID1,ID2]], lb = [0], types = ["I"])
+    yPredecessorIds = {}
+    ySuccessorIds = { }
+    for i in AIRPORT:
+        for p in PLANE:
+            ySuccessorIds[i,p] = {}
+            yPredecessorIds[i,p] = { ID:[] for t,ID in yStartTimeIds[i,p].iteritems() }
+            for ID1,intervalIter1 in yDividers[i,p].ids.iteritems():
+                ID2=-1
+                for depTime in startTimes[i]:
+                    if min(intervalIter1) < depTime:
+                        ID2=yDividers[i,p].findId(depTime)
+                if ID2 == -1:
+                    continue
+                ySuccessorIds[i,p][ID1] = ID2
+                yPredecessorIds[i,p][ID2].append(ID1)
+                y[i,i,p,ID1,ID2] = "y#" + i + "_" + i + "_" + p + "_"+ ID1+ "_"+ID2
+                model.variables.add(obj = [travelcost[i,i,p]], names = [y[i,i,p,ID1,ID2]], lb = [0], types = ["I"])
+                
     y_dep = {}
     for p in PLANE:
         for ID in yDividers[PLANE[p].origin,p].ids:
@@ -1332,7 +1376,7 @@ while(mipSolved == 0):
     
     #fuel variables
     z = {}
-    for i,j in TRIP:
+    for i,j in TRIP0:
         for p in PLANE:
             for ID1,intervalIter1 in zDividers[i,p].ids.iteritems():
                 for ID2,intervalIter2 in zDividers[j,p].ids.iteritems():
@@ -1340,6 +1384,23 @@ while(mipSolved == 0):
                         if doTheyIntersect(intervalIter1,shiftList(intervalIter2,-turnover_travel_timesteps[i,j,p])):
                             z[i,j,p,ID1,ID2] = "z#" + i + "_" + j + "_" + p  + "_" + ID1+ "_"+ID2
                             model.variables.add(names = [z[i,j,p,ID1,ID2]], lb = [0], ub = [PLANE[p].max_fuel], types = ["C"])
+    zPredecessorIds = {}
+    zSuccessorIds = { }
+    for i in AIRPORT:
+        for p in PLANE:
+            zSuccessorIds[i,p] = {}
+            zPredecessorIds[i,p] = { ID:[] for t,ID in zStartTimeIds[i,p].iteritems() }
+            for ID1,intervalIter1 in zDividers[i,p].ids.iteritems():
+                ID = -1
+                for depTime in startTimes[i]:
+                    if min(intervalIter1) < depTime:
+                        ID = zDividers[i,p].findId(depTime)
+                if ID == -1 or ID == ID1:
+                    continue
+                zSuccessorIds[i,p][ID1] = ID
+                zPredecessorIds[i,p][ID].append(ID1)
+                z[i,i,p,ID1,ID] = "z#" + i + "_" + i + "_" + p  + "_" + ID1+ "_"+ID2
+                model.variables.add(names = [z[i,i,p,ID1,ID]], lb = [0], ub = [PLANE[p].max_fuel], types = ["C"])
     z_dep = {}
     for p in PLANE:
         for ID in zDividers[PLANE[p].origin,p].ids:
@@ -1357,14 +1418,21 @@ while(mipSolved == 0):
     
     #lower bound for old objective
     if useObjective:
-        thevars = [ y[i,j,p,ID1,ID2] for i,j in TRIP for p in PLANE for ID1,intervalIter1 in yDividers[i,p].ids.iteritems()
+        thevars = [ y[i,j,p,ID1,ID2] for i,j in TRIP0 for p in PLANE for ID1,intervalIter1 in yDividers[i,p].ids.iteritems()
                     for ID2,intervalIter2 in yDividers[j,p].ids.iteritems()
-                        if not(i == j and ID1 ==ID2) and doTheyIntersect(intervalIter1,shiftList(intervalIter2,-turnover_travel_timesteps[i,j,p]))]
-        thecoefs = [ travelcost[i,j,p] for i,j in TRIP for p in PLANE for ID1,intervalIter1 in yDividers[i,p].ids.iteritems()
+                         if doTheyIntersect(intervalIter1,shiftList(intervalIter2,-turnover_travel_timesteps[i,j,p]))]
+        thecoefs = [ travelcost[i,j,p] for i,j in TRIP0 for p in PLANE for ID1,intervalIter1 in yDividers[i,p].ids.iteritems()
                     for ID2,intervalIter2 in yDividers[j,p].ids.iteritems()
-                        if not(i == j and ID1 ==ID2) and doTheyIntersect(intervalIter1,shiftList(intervalIter2,-turnover_travel_timesteps[i,j,p]))]
-        
-        model.linear_constraints.add(names = ['lower bound from last run'],lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["G"], rhs = [oldObjective-0.5])
+                        if doTheyIntersect(intervalIter1,shiftList(intervalIter2,-turnover_travel_timesteps[i,j,p]))]
+        for i in AIRPORT:
+            for p in PLANE:
+                for ID1,intervalIter1 in yDividers[i,p].ids.iteritems():
+                     for ID2 in ySuccessorIds[i,p][ID1]:
+                         thevars += [ y[i,i,p,ID1,ID2] ]
+                         thecoefs += [ travelcost[i,i,p] ]
+       
+        model.linear_constraints.add(names = ['lower bound from last run'],lin_expr = [cplex.SparsePair(thevars,thecoefs)], 
+                                     senses = ["G"], rhs = [oldObjective-0.5])
     
     
     
@@ -1376,6 +1444,7 @@ while(mipSolved == 0):
         model.linear_constraints.add(names = [p+' departure'],lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [1.0])
         thevars = [ y_arr[p,ID] for ID in yDividers[PLANE[p].destination,p].ids ]
         thecoefs = [ 1.0 for ID in yDividers[PLANE[p].destination,p].ids ]
+        
         model.linear_constraints.add(names = [p+' arrival'],lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [1.0])
     
     
@@ -1383,15 +1452,23 @@ while(mipSolved == 0):
     
     #not too long tours cutting plane
     for p in PLANE:
-        thevars = [y[i,j,p,ID1,ID2] for i,j in TRIP for ID1,intervalIter1 in yDividers[i,p].ids.iteritems() 
-                    for ID2,intervalIter2 in yDividers[j,p].ids.iteritems() if not(i == j and ID1 == ID2)
-                    if doTheyIntersect(intervalIter1,shiftList(intervalIter2,-turnover_travel_timesteps[i,j,p]))]
-        thecoefs = [turnover_travel_timesteps[i,j,p] for i,j in TRIP for ID1,intervalIter1 in yDividers[i,p].ids.iteritems()  
-                    for ID2,intervalIter2 in yDividers[j,p].ids.iteritems() if not(i == j and ID1 == ID2)
-                    if doTheyIntersect(intervalIter1,shiftList(intervalIter2,-turnover_travel_timesteps[i,j,p]))]
+        thevars = [y[i,j,p,ID1,ID2] for i,j in TRIP0 for ID1,intervalIter1 in yDividers[i,p].ids.iteritems() 
+                    for ID2,intervalIter2 in yDividers[j,p].ids.iteritems() if 
+                    doTheyIntersect(intervalIter1,shiftList(intervalIter2,-turnover_travel_timesteps[i,j,p]))]
+        thecoefs = [turnover_travel_timesteps[i,j,p] for i,j in TRIP0 for ID1,intervalIter1 in yDividers[i,p].ids.iteritems()  
+                    for ID2,intervalIter2 in yDividers[j,p].ids.iteritems() if 
+                    doTheyIntersect(intervalIter1,shiftList(intervalIter2,-turnover_travel_timesteps[i,j,p]))]
+        for i in AIRPORT:
+            for p in PLANE:
+                for ID1,intervalIter1 in yDividers[i,p].ids.iteritems():
+                    if ySuccessorIds[i,p].has_key(ID1):
+                        ID2 = ySuccessorIds[i,p][ID1]
+                        thevars += [ y[i,i,p,ID1,ID2] ]
+                        thecoefs += [ turnover_travel_timesteps[i,i,p] ]
+        
         model.linear_constraints.add(names = [p+' length cutting plane'],lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"],
                                      rhs = [plane_max_timestep[p]-plane_min_timestep[p]])
-    
+        
     
     
     
@@ -1406,16 +1483,27 @@ while(mipSolved == 0):
                     thevars.append(y_dep[p,ID1])
                     thecoefs += [1.0]
                 
-                thevars += [y[i,j,p,ID2,ID1] for i in AIRPORT  for ID2,intervalIter2 in yDividers[i,p].ids.iteritems() if not(i==j and ID1==ID2)
+                thevars += [y[i,j,p,ID2,ID1] for i in AIRPORT  for ID2,intervalIter2 in yDividers[i,p].ids.iteritems() 
+                                if not(i==j)
                                 and doTheyIntersect(intervalIter2,shiftList(intervalIter1,-turnover_travel_timesteps[i,j,p]))]
-                thecoefs += [1.0 for i in AIRPORT for ID2,intervalIter2 in yDividers[i,p].ids.iteritems() if not(i==j and ID1==ID2)
+                thecoefs += [1.0 for i in AIRPORT for ID2,intervalIter2 in yDividers[i,p].ids.iteritems() if not(i==j)
                                 and doTheyIntersect(intervalIter2,shiftList(intervalIter1,-turnover_travel_timesteps[i,j,p]))]
                 
-                thevars += [y[j,k,p,ID1,ID2] for k in AIRPORT for ID2,intervalIter2 in yDividers[k,p].ids.iteritems() if not(k==j and ID1==ID2)
+                thevars += [y[j,k,p,ID1,ID2] for k in AIRPORT for ID2,intervalIter2 in yDividers[k,p].ids.iteritems() 
+                                if not(k==j)
                                 and doTheyIntersect(intervalIter1,shiftList(intervalIter2,-turnover_travel_timesteps[j,k,p]))]
-                thecoefs += [-1.0 for k in AIRPORT for ID2,intervalIter2 in yDividers[k,p].ids.iteritems() if not(k==j and ID1==ID2)
+                thecoefs += [-1.0 for k in AIRPORT for ID2,intervalIter2 in yDividers[k,p].ids.iteritems() if not(k==j)
                                 and doTheyIntersect(intervalIter1,shiftList(intervalIter2,-turnover_travel_timesteps[j,k,p]))]
 
+                if ID1 in yStartTimeIds[j,p].values():
+                    for ID2 in yPredecessorIds[j,p][ID1]:
+                        thevars += [ y[j,j,p,ID2,ID1] ]
+                        thecoefs += [ 1.0 ]
+                
+                if ySuccessorIds[j,p].has_key(ID1):
+                    thevars += [ y[j,j,p,ID1,ySuccessorIds[j,p][ID1]] ]
+                    thecoefs += [ -1.0 ]
+                    
                 if (j == PLANE[p].destination):
                     thevars.append(y_arr[p,ID1])
                     thecoefs += [-1.0]
@@ -1463,25 +1551,33 @@ while(mipSolved == 0):
                 for ID1,intervalIter1 in xDividers[j,p].ids.iteritems():
                     thevars = []
                     thecoefs = []
-    
+                    
                     if (j == REQUEST[r].origin):
                         thevars.append(x_dep[r,p,ID1])
                         thecoefs += [1.0]
                     
-                    thevars += [ x[i,j,r,p,ID2,ID1] for i in AIRPORT for ID2,intervalIter2 in xDividers[i,p].ids.iteritems() if not(i==j and ID1==ID2)
+                    thevars += [ x[i,j,r,p,ID2,ID1] for i in AIRPORT for ID2,intervalIter2 in xDividers[i,p].ids.iteritems() if not(i==j)
                                     and doTheyIntersect(intervalIter2,shiftList(intervalIter1,-turnover_travel_timesteps[i,j,p]))]
-                    thecoefs += [ 1.0 for i in AIRPORT for ID2,intervalIter2 in xDividers[i,p].ids.iteritems() if not(i==j and ID1==ID2)
+                    thecoefs += [ 1.0 for i in AIRPORT for ID2,intervalIter2 in xDividers[i,p].ids.iteritems() if not(i==j)
                                     and doTheyIntersect(intervalIter2,shiftList(intervalIter1,-turnover_travel_timesteps[i,j,p]))]
                     
-                    thevars +=[ x[j,k,r,p,ID1,ID2] for k in AIRPORT  for ID2,intervalIter2 in xDividers[k,p].ids.iteritems()if not(j==k and ID1==ID2)
+                    thevars +=[ x[j,k,r,p,ID1,ID2] for k in AIRPORT  for ID2,intervalIter2 in xDividers[k,p].ids.iteritems()if not(j==k)
                                     and doTheyIntersect(intervalIter1,shiftList(intervalIter2,-turnover_travel_timesteps[j,k,p]))]
                     
-                    thecoefs += [ -1.0 for k in AIRPORT for ID2,intervalIter2 in xDividers[k,p].ids.iteritems()if not(j==k and ID1==ID2)
+                    thecoefs += [ -1.0 for k in AIRPORT for ID2,intervalIter2 in xDividers[k,p].ids.iteritems()if not(j==k)
                                     and doTheyIntersect(intervalIter1,shiftList(intervalIter2,-turnover_travel_timesteps[j,k,p]))]
     
                     if (j == REQUEST[r].destination):
                         thevars.append(x_arr[r,p,ID1])
                         thecoefs += [-1.0]
+                    
+                    if ID1 in xStartTimeIds[j,p].values():
+                        for ID2 in xPredecessorIds[j,p][ID1]:
+                            thevars += [ x[j,j,r,p,ID2,ID1] ]
+                            thecoefs += [ 1.0 ]
+                    if xSuccessorIds[j,p].has_key(ID1):
+                        thevars += [ x[j,j,r,p,ID1,xSuccessorIds[j,p][ID1]] ]
+                        thecoefs += [ -1.0 ]
 
                     model.linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [0.0])
     
@@ -1504,26 +1600,25 @@ while(mipSolved == 0):
     
     
     # seat limit
-    for i,j in TRIP:
+    for i,j in TRIP0:
         for p in PLANE:
             for ID1,intervalIter1 in xDividers[i,p].ids.iteritems():
                 for ID2,intervalIter2 in xDividers[j,p].ids.iteritems():
-                    if not(i == j and ID1 == ID2):
-                        if doTheyIntersect(intervalIter1,shiftList(intervalIter2,-turnover_travel_timesteps[i,j,p])):    
-                            
-                            thevars = [y[i,j,p,ID3,ID4] for ID3,intervalIter3 in yDividers[i,p].ids.iteritems() 
-                                                        for ID4,intervalIter4 in yDividers[j,p].ids.iteritems()
-                                                            if doTheyIntersect(intervalIter1,intervalIter3) and doTheyIntersect(intervalIter2,intervalIter4)
-                                                            and doTheyIntersect(intervalIter3,shiftList(intervalIter4,-turnover_travel_timesteps[i,j,p]))]
-                            thecoefs = [-PLANE[p].seats for ID3,intervalIter3 in yDividers[i,p].ids.iteritems() 
-                                                        for ID4,intervalIter4 in yDividers[j,p].ids.iteritems()
-                                                            if doTheyIntersect(intervalIter1,intervalIter3) and doTheyIntersect(intervalIter2,intervalIter4)
-                                                            and doTheyIntersect(intervalIter3,shiftList(intervalIter4,-turnover_travel_timesteps[i,j,p]))]
-                            thevars += [x[i,j,r,p,ID1,ID2] for r in REQUEST ]
-                            thecoefs += [REQUEST[r].passengers for r in REQUEST]
-                            
-                            model.linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [0.0])
-    
+                    if doTheyIntersect(intervalIter1,shiftList(intervalIter2,-turnover_travel_timesteps[i,j,p])):    
+                        
+                        thevars = [y[i,j,p,ID3,ID4] for ID3,intervalIter3 in yDividers[i,p].ids.iteritems() 
+                                                    for ID4,intervalIter4 in yDividers[j,p].ids.iteritems()
+                                                        if doTheyIntersect(intervalIter1,intervalIter3) and doTheyIntersect(intervalIter2,intervalIter4)
+                                                        and doTheyIntersect(intervalIter3,shiftList(intervalIter4,-turnover_travel_timesteps[i,j,p]))]
+                        thecoefs = [-PLANE[p].seats for ID3,intervalIter3 in yDividers[i,p].ids.iteritems() 
+                                                    for ID4,intervalIter4 in yDividers[j,p].ids.iteritems()
+                                                        if doTheyIntersect(intervalIter1,intervalIter3) and doTheyIntersect(intervalIter2,intervalIter4)
+                                                        and doTheyIntersect(intervalIter3,shiftList(intervalIter4,-turnover_travel_timesteps[i,j,p]))]
+                        thevars += [x[i,j,r,p,ID1,ID2] for r in REQUEST ]
+                        thecoefs += [REQUEST[r].passengers for r in REQUEST]
+                        
+                        model.linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [0.0])
+    #TODO: Pruefe, ob die seat capacity constraints auch fuer Wartekanten eingefuehrt werden muessen
     
     
     
@@ -1532,7 +1627,7 @@ while(mipSolved == 0):
         thevars = [x[i,j,r,p,ID1,ID2] for i,j in TRIP0 for p in PLANE 
                    for ID1,intervalIter1 in xDividers[i,p].ids.iteritems() for ID2,intervalIter2 in xDividers[j,p].ids.iteritems()
                    if doTheyIntersect(intervalIter1,shiftList(intervalIter2,-turnover_travel_timesteps[i,j,p]))]
-        thecoefs = [1.0 ]*len(thevars)
+        thecoefs = [ 1.0 ]*len(thevars)
         
         model.linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [REQUEST[r].max_stops + 1])
     
@@ -1541,22 +1636,33 @@ while(mipSolved == 0):
     
     
     # no flight no fuel
-    for i,j in TRIP:
+    for i,j in TRIP0:
         for p in PLANE:
             for ID1,intervalIter1 in yDividers[i,p].ids.iteritems():
                 for ID2,intervalIter2 in yDividers[j,p].ids.iteritems():
                     if doTheyIntersect(intervalIter1,shiftList(intervalIter2,-turnover_travel_timesteps[i,j,p])):   
-                        if not(i == j and ID1 == ID2):
-                            thevars = [y[i,j,p,ID1,ID2]]
-                            thecoefs = [-max_trip_fuel[i,j,p] ]
-                            
-                            thevars += [z[i,j,p,ID1,ID2] for ID3,intervalIter3 in zDividers[i,p].ids.iteritems() 
-                                                for ID4,intervalIter4 in zDividers[j,p].ids.iteritems()
-                                                            if doTheyIntersect(intervalIter1,intervalIter3) and doTheyIntersect(intervalIter2,intervalIter4)]
-                            thecoefs += [1.0 for ID3,intervalIter3 in zDividers[i,p].ids.iteritems() for ID4,intervalIter4 in zDividers[j,p].ids.iteritems()
-                                                            if doTheyIntersect(intervalIter1,intervalIter3) and doTheyIntersect(intervalIter2,intervalIter4)]
-                            
-                            model.linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [0.0])
+                        thevars = [y[i,j,p,ID1,ID2]]
+                        thecoefs = [-max_trip_fuel[i,j,p] ]
+                        #TODO: Wenn z und y gleich geteilt werden ist die Ueberpruefung mit ID3 und ID4 ueberfluessig?
+                        thevars += [z[i,j,p,ID1,ID2] for ID3,intervalIter3 in zDividers[i,p].ids.iteritems() 
+                                            for ID4,intervalIter4 in zDividers[j,p].ids.iteritems()
+                                                        if doTheyIntersect(intervalIter1,intervalIter3) and doTheyIntersect(intervalIter2,intervalIter4)]
+                        thecoefs += [1.0 for ID3,intervalIter3 in zDividers[i,p].ids.iteritems() for ID4,intervalIter4 in zDividers[j,p].ids.iteritems()
+                                                        if doTheyIntersect(intervalIter1,intervalIter3) and doTheyIntersect(intervalIter2,intervalIter4)]
+                        
+                        model.linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [0.0])
+    for i in AIRPORT:
+        for p in PLANE:
+            for ID1,intervalIter1 in yDividers[i,p].ids.iteritems():
+                if ySuccessorIds[i,p].has_key(ID1): 
+                    thevars = [y[i,i,p,ID1,ySuccessorIds[i,p][ID1]]]
+                    thecoefs = [-max_trip_fuel[i,i,p] ]
+                    
+                    thevars += [z[i,i,p,ID1,ySuccessorIds[i,p][ID1]] ]
+                    thecoefs += [1.0 ]
+                    
+                    model.linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [0.0])
+    
     #no plane no fuel
     #arrival
     for p in PLANE:
@@ -1588,7 +1694,7 @@ while(mipSolved == 0):
                 for i in AIRPORT:
                     for ID2,intervalIter2 in zDividers[i,p].ids.iteritems():
                         if doTheyIntersect(intervalIter2,shiftList(intervalIter1,-turnover_travel_timesteps[i,j,p])): 
-                            if not(i == j and ID1 == ID2):
+                            if not(i == j):
                                 thevars.append(z[i,j,p,ID2,ID1])
                                 thecoefs.append(1.0)
                 
@@ -1599,12 +1705,21 @@ while(mipSolved == 0):
                 for k in AIRPORT:
                     for ID2,intervalIter2 in zDividers[k,p].ids.iteritems():
                         if doTheyIntersect(intervalIter1,shiftList(intervalIter2,-turnover_travel_timesteps[j,k,p])):  
-                            if not(j == k and ID1 == ID2):
+                            if not(j == k):
                                 thevars.append(z[j,k,p,ID1,ID2])
                                 thecoefs.append(-1.0)
     
                                 thevars.append(y[j,k,p,ID1,ID2])
                                 thecoefs.append(-fuelconsumption[j,k,p])
+                
+                if ID1 in zStartTimeIds[j,p].values():
+                    for ID2 in zPredecessorIds[j,p][ID1]:
+                        thevars += [ z[j,j,p,ID2,ID1] ]
+                        thecoefs += [ 1.0 ]
+                if zSuccessorIds[j,p].has_key(ID1):
+                    thevars += [ z[j,j,p,ID1,zSuccessorIds[j,p][ID1]],y[j,j,p,ID1,ySuccessorIds[j,p][ID1]] ]
+                    thecoefs += [ -1.0, -fuelconsumption[j,j,p]]
+                    
                 
                 if j == PLANE[p].plane_arrival:
                     thevars.append(z_arr[p,ID1])
@@ -1614,39 +1729,40 @@ while(mipSolved == 0):
                     model.linear_constraints.add(names = ["fuelconsumption_" + j + "_" + p], 
                                                  lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [0.0])
                 else:
-                    model.linear_constraints.add(names = ["refueling_" + j + "_" + p], lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [0.0])
+                    model.linear_constraints.add(names = ["refueling_" + j + "_" + p], 
+                                                 lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [0.0])
     
     
     
     
     # weight limit (=max fuel)
-    for i,j in TRIP:
+    #TODO:Pruefe, ob Gewichtsschranke auch auf Wartekanten definiert werden muss
+    for i,j in TRIP0:
         for p in PLANE:
             for ID1,intervalIter1 in xDividers[i,p].ids.iteritems():
                 for ID2,intervalIter2 in xDividers[j,p].ids.iteritems():
-                    if not(i == j and ID1 == ID2):
-                        if doTheyIntersect(intervalIter1,shiftList(intervalIter2,-turnover_travel_timesteps[i,j,p])):    
-                            thevars = [y[i,j,p,ID3,ID4] for ID3,intervalIter3 in yDividers[i,p].ids.iteritems() 
-                                                        for ID4,intervalIter4 in yDividers[j,p].ids.iteritems()
-                                                            if doTheyIntersect(intervalIter1,intervalIter3) and doTheyIntersect(intervalIter2,intervalIter4)
-                                                            and doTheyIntersect(intervalIter3,shiftList(intervalIter4,-turnover_travel_timesteps[i,j,p]))]
-                            thecoefs = [-max_trip_payload[i,j,p] for ID3,intervalIter3 in yDividers[i,p].ids.iteritems() 
-                                                        for ID4,intervalIter4 in yDividers[j,p].ids.iteritems()
-                                                            if doTheyIntersect(intervalIter1,intervalIter3) and doTheyIntersect(intervalIter2,intervalIter4)
-                                                            and doTheyIntersect(intervalIter3,shiftList(intervalIter4,-turnover_travel_timesteps[i,j,p]))]
-                            
-                            thevars += [z[i,j,p,ID3,ID4] for ID3,intervalIter3 in yDividers[i,p].ids.iteritems() 
-                                                         for ID4,intervalIter4 in yDividers[j,p].ids.iteritems()
-                                                            if doTheyIntersect(intervalIter1,intervalIter3) and doTheyIntersect(intervalIter2,intervalIter4)
-                                                            and doTheyIntersect(intervalIter3,shiftList(intervalIter4,-turnover_travel_timesteps[i,j,p]))]
-                            thecoefs += [1.0 for ID3,intervalIter3 in yDividers[i,p].ids.iteritems() for ID4,intervalIter4 in yDividers[j,p].ids.iteritems()
-                                                            if doTheyIntersect(intervalIter1,intervalIter3) and doTheyIntersect(intervalIter2,intervalIter4)
-                                                            and doTheyIntersect(intervalIter3,shiftList(intervalIter4,-turnover_travel_timesteps[i,j,p]))]
-                            
-                            thevars += [x[i,j,r,p,ID1,ID2] for r in REQUEST]
-                            thecoefs += [REQUEST[r].weight for r in REQUEST]
-                            
-                            model.linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [0.0])           
+                    if doTheyIntersect(intervalIter1,shiftList(intervalIter2,-turnover_travel_timesteps[i,j,p])):    
+                        thevars = [y[i,j,p,ID3,ID4] for ID3,intervalIter3 in yDividers[i,p].ids.iteritems() 
+                                                    for ID4,intervalIter4 in yDividers[j,p].ids.iteritems()
+                                                        if doTheyIntersect(intervalIter1,intervalIter3) and doTheyIntersect(intervalIter2,intervalIter4)
+                                                        and doTheyIntersect(intervalIter3,shiftList(intervalIter4,-turnover_travel_timesteps[i,j,p]))]
+                        thecoefs = [-max_trip_payload[i,j,p] for ID3,intervalIter3 in yDividers[i,p].ids.iteritems() 
+                                                    for ID4,intervalIter4 in yDividers[j,p].ids.iteritems()
+                                                        if doTheyIntersect(intervalIter1,intervalIter3) and doTheyIntersect(intervalIter2,intervalIter4)
+                                                        and doTheyIntersect(intervalIter3,shiftList(intervalIter4,-turnover_travel_timesteps[i,j,p]))]
+                        
+                        thevars += [z[i,j,p,ID3,ID4] for ID3,intervalIter3 in yDividers[i,p].ids.iteritems() 
+                                                     for ID4,intervalIter4 in yDividers[j,p].ids.iteritems()
+                                                        if doTheyIntersect(intervalIter1,intervalIter3) and doTheyIntersect(intervalIter2,intervalIter4)
+                                                        and doTheyIntersect(intervalIter3,shiftList(intervalIter4,-turnover_travel_timesteps[i,j,p]))]
+                        thecoefs += [1.0 for ID3,intervalIter3 in yDividers[i,p].ids.iteritems() for ID4,intervalIter4 in yDividers[j,p].ids.iteritems()
+                                                        if doTheyIntersect(intervalIter1,intervalIter3) and doTheyIntersect(intervalIter2,intervalIter4)
+                                                        and doTheyIntersect(intervalIter3,shiftList(intervalIter4,-turnover_travel_timesteps[i,j,p]))]
+                        
+                        thevars += [x[i,j,r,p,ID1,ID2] for r in REQUEST]
+                        thecoefs += [REQUEST[r].weight for r in REQUEST]
+                        
+                        model.linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [0.0])           
     
     
     

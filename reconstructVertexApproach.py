@@ -87,7 +87,7 @@ def solToPaths(solutionStringList):
 
 
 #changes dividers so that the not fully expanded model cannot find the infeasible path path anymore
-def breakPath(path,start_time,end_time,breakX = 0):
+def breakPathOld(path,start_time,end_time,breakX = 0):
     pathLength=0
     for i in range(len(path)-1):
         pathLength+=turnover_travel_timesteps[path[i],path[i+1],p]
@@ -108,6 +108,22 @@ def breakPath(path,start_time,end_time,breakX = 0):
         if i < len(path)-1:
             prevPath+=turnover_travel_timesteps[path[i],path[i+1],p]
 
+def breakPath(path,start_time,end_time,breakX = 0):
+    pathLength=0
+    for i in range(len(path)-1):
+        pathLength+=turnover_travel_timesteps[path[i],path[i+1],p]
+    prevPath=start_time
+    for i in range(len(path)):
+        breakPoints=[prevPath+iters*pathLength - 1 for iters in range(int((end_time-start_time)/pathLength)+1) 
+                        if prevPath+iters*pathLength - 1 < end_time and prevPath+iters*pathLength - 1 > start_time]
+        if breakPoints != []:
+            yDividers[path[i],p].addDivider(breakPoints)
+            zDividers[path[i],p].addDivider(breakPoints)        
+            if breakX:
+                xDividers[path[i],p].addDivider(breakPoints)
+               
+        if i < len(path)-1:
+            prevPath+=turnover_travel_timesteps[path[i],path[i+1],p]
 
 
 #grab the old solution values
