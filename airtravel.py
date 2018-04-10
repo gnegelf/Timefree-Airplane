@@ -8,251 +8,1726 @@ import sys
 from operator import itemgetter
 from cplex.callbacks import IncumbentCallback
 from cplex.callbacks import LazyConstraintCallback
+from cplex.callbacks import MIPInfoCallback
 from cplex.exceptions import CplexSolverError
 from sets import Set 
 
 EPSILON = 1e-6
 
-        
-# -------
-# classes
-# -------
 
-
-class ARC(object):
-    def __init__(self,tail=None,head=None,visited=None):
-        self.tail = tail
-        self.head = head
-        self.visited = visited                        
-        
 # ---------
 # callbacks
 # ---------
 
-class AIRPLANE(object):
-    def __init__(self,cost=None,seats=None,origin=None,departure_min_fuel=None,departure_max_fuel=None,destination=None,arrival_min_fuel=None,arrival_max_fuel=None,required_fueltype=None,fuel=None,speed=None,max_fuel=None,empty_weight=None,add_turnover_time=None,reserve_fuel=None,contigence_ratio=None):
-        self.cost = float(cost)
-        self.seats = int(seats)
-        self.origin = origin
-        self.departure_min_fuel = float(departure_min_fuel)
-        self.departure_max_fuel = float(departure_max_fuel)
-        self.destination = destination
-        self.arrival_min_fuel = float(arrival_min_fuel)
-        self.arrival_max_fuel = float(arrival_max_fuel)
-        self.required_fueltype = int(required_fueltype)
-        self.fuel = float(fuel)
-        self.speed = float(speed)
-        self.max_fuel = float(max_fuel)
-        self.empty_weight = float(empty_weight)
-        self.add_turnover_time = int(add_turnover_time) / 5
-        self.reserve_fuel = float(reserve_fuel)
-        self.contigence_ratio = float(contigence_ratio)
-    def printMe(self):
-        print("Going from " + str(self.origin) + " to "+ str(self.destination))
+class CountNodesCallback(MIPInfoCallback):
+  
+  def __call__(self):
+    
+    self.number_of_nodes = self.get_num_nodes()
+    self.best_obj_val = self.get_best_objective_value()
+    self.mip_gap = self.get_MIP_relative_gap()
+    
+    return
+    
+
+class CheckSolutionMIPCallback(IncumbentCallback):
+
+  def __call__(self):
+    
+    self.number_of_calls += 1
+
+    #print "Check Solution with MIP (IncumbentCallback) ",self.number_of_calls
+
+    # get incumbent values
+    
+    solution_source = self.get_solution_source()
+    
+    #print "solution source: ",solution_source
+    
+    all_values = self.get_values()
+    
+    #print all_values
+    
+    all_values_int = [int(round(val)) for val in all_values]
+    
+    all_values_int_tuple = tuple(all_values_int)
+    
+    #print all_values_int_tuple
+    
+    if all_values_int_tuple in self.solution_pool:
+      #print "DIE HATTEN WIR SCHON"
+      self.reject()
+      return
+    else:
+      #print "DIE IST NEU"
+      self.solution_pool.append(all_values_int_tuple)
+      self.number_of_calls_with_new_solution += 1
+      
+    # get incumbent solution
+
+    value_of_y = {}
+
+    for i,j in TRIP0:
+      for p in PLANE:
+        value_of_y[i,j,p] = int(round(self.get_values(y[i,j,p])))
+        #if value_of_y[i,j,p] > 0:
+          #print "  from",i,"to",j,"plane",p,"   (",value_of_y[i,j,p],")"
+
+    value_of_x = {}
+
+    for r in REQUEST:
+      for i,j in REQUEST_TRIP0[r]:
+        for p in PLANE:
+          value_of_x[i,j,r,p] = int(round(self.get_values(x[i,j,r,p])))
+          #if value_of_x[i,j,r,p] > 0:
+          #  print "  from",i,"to",j,"request",r,"plane",p
+            
+    value_of_x_dep = {}
+    
+    for r in REQUEST:
+      for p in PLANE:
+        value_of_x_dep[r,p] = int(round(self.get_values(x_dep[r,p])))
+        #if value_of_x_dep[r,p] > 0:
+          #print "  request",r,"plane",p 
+    
+    value_of_x_arr = {}
         
-
-class AIRPORT(object):
-    def __init__(self,turnover_time=None,maintenance=None):
-        self.turnover_time = int(turnover_time) /5
-        self.maintenance = int(maintenance)
-        self.fuel = {}
-
-class REQUEST(object):
-    def __init__(self,origin=None,destination=None,earliest_departure_time=None,earliest_departure_day=None,latest_arrival_time=None,latest_arrival_day=None,passengers=None,weight=None):
-        self.origin = origin
-        self.destination = destination
-        self.earliest_departure_time = int(earliest_departure_time) / 5
-        self.earliest_departure_day = int(earliest_departure_day)
-        self.latest_arrival_time = int(latest_arrival_time) / 5
-        self.latest_arrival_day = int(latest_arrival_day)
-        self.passengers = int(passengers)
-        self.weight = float(weight)
-
-        self.earliest_departure = 1440 /5 * (self.earliest_departure_day - 1) + self.earliest_departure_time
-        self.latest_arrival = 1440 / 5 * (self.latest_arrival_day - 1) + self.latest_arrival_time
-    def printMe(self):
-        print("Request going from " + str(self.origin) + " to "+ str(self.destination))
-        print("Earliest departure: %d" % (self.earliest_departure))
-        print("Latest Arrival: %d" % (self.latest_arrival))
-
-class WEIGHTLIMIT(object):
-    def __init__(self,max_takeoff_weight=None,max_landing_weight=None):
-        self.max_takeoff_weight = float(max_takeoff_weight)
-        self.max_landing_weight = float(max_landing_weight)
-
-class DIVIDERCOLLECTION(object):
-    def __init__(self,T):
-        self.dividers=[Divider([T+1])]
-        #self.dividers=[Divider([i+1 for i in range(T)])]
-        self.ids=self.generateIds(T)
-    def addDivider(self,listOfPoints,T):
-        if listOfPoints == []:
-            print("Error Empty list added")
-        else:
-            if self.changesIntervals(T,listOfPoints):
-                self.dividers.append(Divider(listOfPoints))
-                print("Intervals changed")
-            self.ids=self.generateIds(T)
-    def generateIds(self,T,lOP=None):
-        tol = 0.000001
-        ids={}
-        intervalbarriers=[-1]
-        newDiv=[]
-        if not lOP == None:
-            newDiv=[Divider(lOP)]
-        for divider in self.dividers+newDiv:
-            for point in divider.listOfPoints:
-                for count in range(len(intervalbarriers)):
-                    if abs(point -intervalbarriers[-count-1])< tol:
-                        break
-                    if point -intervalbarriers[-count-1] > 0:
-                        intervalbarriers.insert(len(intervalbarriers)-count,point)
-                        break
-        #prev=-1
-        for j,i in enumerate(intervalbarriers):
-            if j!=0:
-                idstore=self.findId(i-1,lOP)
-                if ids.has_key(idstore):
-                    ids[idstore]+=[prev,i]
-                else:
-                    ids[idstore]=[prev,i]
-            prev=i
-        return ids
-    def findId(self,t,listOfPoints=None):
-        idString=""
-        if listOfPoints!=None:
-            for divider in self.dividers+[Divider(listOfPoints)]:
-                idString+=str(divider.evaluate(t))
-        else:
-            for divider in self.dividers:
-                idString+=str(divider.evaluate(t))
-        return idString
-    def changesIntervals(self,T,listOfPoints):
-        if len(self.ids)==len(self.generateIds(T,listOfPoints)):
-            return 0
-        else:
-            return 1
+    for r in REQUEST:
+      for p in PLANE:
+        value_of_x_arr[r,p] = int(round(self.get_values(x_arr[r,p])))
+        #if value_of_x_arr[r,p] > 0:
+          #print "  request",r,"plane",p
+    
+    # print data on screen
+    
+    #print
+    #
+    #for p in PLANE:
+    #  print "# plane",p
+    #  for i,j in TRIP0:
+    #    if value_of_y[i,j,p] > 0:
+    #      print p,i,j,value_of_y[i,j,p]
+    #
+    #print
+    #
+    #for p in PLANE:
+    #  print "# plane",p
+    #  for r in REQUEST:
+    #    if value_of_x_arr[r,p] > 0:
+    #      print p,r;
+    #      
+    #print
+    #
+    #for p in PLANE:
+    #  print "# plane",p
+    #  for r in REQUEST:
+    #    for i,j in REQUEST_TRIP0[r]:
+    #      if value_of_x[i,j,r,p] > 0:
+    #        print p,r,i,j
+    #
+    #print "\n----------------------------------\n\n"
+    
+    # define sets and parameters from incumbent 
+    
+    INCUMBENT_TRIP = {}
+    trips_between_airports = {}
+    
+    for p in PLANE:
+      INCUMBENT_TRIP[p] = {}
+      trips_between_airports[p] = {}
+      
+      for i,j in TRIP0:
+        if value_of_y[i,j,p] > 0:
+          INCUMBENT_TRIP[p][i,j] = 1
+          trips_between_airports[p][i,j] = value_of_y[i,j,p]
+    
+                
+    INCUMBENT_AIRPORT = {}
+    
+    for p in PLANE:
+      INCUMBENT_AIRPORT[p] = {}
+      for i,j in INCUMBENT_TRIP[p]:
+        INCUMBENT_AIRPORT[p][i] = 1
+        INCUMBENT_AIRPORT[p][j] = 1
+    
+    
+    INCUMBENT_TRIP_PLUS = {}
+    
+    for p in PLANE:
+      INCUMBENT_TRIP_PLUS[p] = {}
+      for i,j in INCUMBENT_TRIP[p]:
+        INCUMBENT_TRIP_PLUS[p][i,j] = 1
+      
+      for i in INCUMBENT_AIRPORT[p]:
+        INCUMBENT_TRIP_PLUS[p][i,i] = 1
+    
+    
+    INCUMBENT_REQUEST = {}
+    
+    for p in PLANE:
+      INCUMBENT_REQUEST[p] = {}
+      
+      for r in REQUEST:
+        if value_of_x_arr[r,p] > 0:
+          INCUMBENT_REQUEST[p][r] = 1
+    
+    
+    INCUMBENT_REQUEST_AIRPORT = {}
+    
+    for p in PLANE:
+      for r in REQUEST:
+        INCUMBENT_REQUEST_AIRPORT[p,r] = {}
         
-class Divider():
-    def __init__(self,listOfPoints):
-        self.listOfPoints=listOfPoints
-    def evaluate(self,t):
-        #return t
-        for i,val in enumerate(self.listOfPoints):
-            if t < val:
-                return i % 2
-        return (i+1) % 2
-# prepare reading and parsing
+        for i,j in REQUEST_TRIP0[r]:
+          if value_of_x[i,j,r,p] > 0:
+            INCUMBENT_REQUEST_AIRPORT[p,r][i] = 1
+            INCUMBENT_REQUEST_AIRPORT[p,r][j] = 1
+    
+    
+    INCUMBENT_REQUEST_TRIP_PLUS = {}
 
-def doTheyIntersect(lon1i,lon2i,tol=0.00000001):
-    if lon1i[0] >= lon2i[0]:
-        lon1=lon1i
-        lon2=lon2i
-    else:
-        lon2=lon1i
-        lon1=lon2i
-    i=0
-    j=0
-    while i < len(lon1) and j < len(lon2):
-        #print("i: %d" %i)
-        #print("j: %d" % j)
-        if i % 2 == 0:
-            if lon1[i] - lon2[j]<-tol:
-                i+=1
-            else:
-                if lon1[i] - lon2[j+1]<-tol:
-                    return 1
-                else: j+=2
-        else:
-            if lon1[i] - lon2[j]<=tol:
-                i+=1
-            else:
-                if lon1[i] - lon2[j+1]<=tol:
-                    return 1
-                else: j+=2 
-    return 0
-
-def joinIntervalLists(l1,l2):
-    newList=[]
-    i=0
-    j=0
-    if len(l1) == 0 or len(l2)==0:
-        return l1+l2
-    if l1[0]>=l2[0]:
-        jopen=1
-        newList.append(l2[j])
-    else:
-        jopen=0
-        newList.append(l1[i])   
-    while i < len(l1) and j < len(l2):
-        if jopen:
-            #print( "last boundary from l2" )
-            if  l1[i] <= l2[j+1]:
-                i+=1
-            else:
-                if i % 2 == 1:
-                    j+=1
-                    i-=1
-                    jopen=0
-                else:
-                    newList.append(l2[j+1])
-                    j+=2
-                    if j < len(l2):
-                        if l1[i]>=l2[j]:
-                            newList.append(l2[j])
-                            #j+=1
-                        else:
-                            newList.append(l1[i])
-                            jopen=0
-                            #i+=1
-        else:
-            #print( "last boundary from l1" )
-            if l1[i+1] >= l2[j]:
-                j+=1
-            else:
-                if j % 2 == 1:
-                    i+=1
-                    j-=1
-                    jopen=1
-                else:
-                    newList.append(l1[i+1])
-                    i+=2
-                    if i < len(l1):
-                        if l1[i] <= l2[j]:
-                            newList.append(l1[i])
-                            #i+=1
-                        else:
-                            newList.append(l2[j])
-                            jopen=1
-                            #j+=1
-    if jopen:
-        j+=1
-    else:
-        i+=1
-    while i < (len(l1)):
-        newList.append(l1[i])
-        i+=1
-    while j < len(l2):
-        newList.append(l2[j])
-        j+=1
-    return newList
+    for p in PLANE:
+      for r in REQUEST:
+        INCUMBENT_REQUEST_TRIP_PLUS[p,r] = {}
+    
+        for i,j in REQUEST_TRIP0[r]:
+          if value_of_x[i,j,r,p] > 0:
+            INCUMBENT_REQUEST_TRIP_PLUS[p,r][i,j] = 1
+          
+        for i in INCUMBENT_REQUEST_AIRPORT[p,r]:
+          if i != REQUEST[r].request_departure and i != REQUEST[r].request_arrival:
+            INCUMBENT_REQUEST_TRIP_PLUS[p,r][i,i] = 1
+    
+    
+    # INCUMBENT CHECKER MODEL
+    
+    for p in PLANE:
+    
+      #print "checking plane ",p
+      
+      # set up MIP model
+        
+      incumb_model = cplex.Cplex()
         
                 
+      # Variables
+    
+      incumbent_x = {}
+      number_of_incumbent_x = 0
+      thebinaryvars = []
 
-def shiftList(l,shift):
-    lnew=[]
-    for i in range(len(l)):
-        lnew.append(l[i]+shift)
-    return lnew
+      for r in INCUMBENT_REQUEST[p]:
+        for i,j in INCUMBENT_REQUEST_TRIP_PLUS[p,r]:
+          for t in TIMESTEP:
+            if t in REQUEST_TIMESTEP[r]:
+              incumbent_x[i,j,t,r] = "x#" + i + "_" + j + "_" + str(t) + "_" + r
+              ##print incumbent_x[i,j,t,r] 
+              thebinaryvars.append(incumbent_x[i,j,t,r])
+              number_of_incumbent_x += 1
+                    
+      #print "number of 'x' variables:",number_of_incumbent_x
+            
+      incumbent_x_dep = {}
+      number_of_incumbent_x_dep = 0
+      
+      for r in INCUMBENT_REQUEST[p]:
+        for t in TIMESTEP:
+          if t in REQUEST_TIMESTEP[r]:
+            incumbent_x_dep[t,r] = "x_dep#" + str(t) + "_" + r
+            thebinaryvars.append(incumbent_x_dep[t,r])
+            number_of_incumbent_x_dep += 1
+                  
+      #print "number of 'x_dep' variables:",number_of_incumbent_x_dep
+
+      incumbent_x_arr = {}
+      number_of_incumbent_x_arr = 0
+
+      for r in INCUMBENT_REQUEST[p]:
+        for t in TIMESTEP:
+          if t in REQUEST_TIMESTEP[r]:
+            incumbent_x_arr[t,r] = "x_arr#" + str(t) + "_" + r
+            thebinaryvars.append(incumbent_x_arr[t,r])
+            number_of_incumbent_x_arr += 1
+            
+      #print "number of 'x_arr' variables:",number_of_incumbent_x_arr
+      
+      incumbent_y = {}
+      number_of_incumbent_y = 0
+
+      for i,j in INCUMBENT_TRIP_PLUS[p]:
+        for t in PLANE_TIMESTEP[p]:
+          incumbent_y[i,j,t] = "y#" + i + "_" + j + "_" + str(t)
+          thebinaryvars.append(incumbent_y[i,j,t])
+          number_of_incumbent_y += 1
+          
+      #print "number of 'y' variables:",number_of_incumbent_y
+
+      incumbent_y_dep = {}
+      number_of_incumbent_y_dep = 0
+      
+      for t in PLANE_TIMESTEP[p]:
+        incumbent_y_dep[t] = "y_dep#" + str(t)
+        thebinaryvars.append(incumbent_y_dep[t])
+        number_of_incumbent_y_dep += 1
+        
+      #print "number of 'y_dep' variables:",number_of_incumbent_y_dep
+      
+      incumbent_y_arr = {}
+      number_of_incumbent_y_arr = 0
+      
+      for t in PLANE_TIMESTEP[p]:
+        incumbent_y_arr[t] = "y_arr#" + str(t)
+        thebinaryvars.append(incumbent_y_arr[t])
+        number_of_incumbent_y_arr += 1
+        
+      #print "number of 'y_arr' variables:",number_of_incumbent_y_arr
+      
+      incumbent_f = {}
+      number_of_incumbent_f = 0
+      thecontvars = []
+
+      for i,j in INCUMBENT_TRIP_PLUS[p]:
+        for t in PLANE_TIMESTEP[p]:
+          incumbent_f[i,j,t] = "f#" + i + "_" + j + "_" + str(t)
+          thecontvars.append(incumbent_f[i,j,t])
+          number_of_incumbent_f += 1
+
+      #print "number of 'f' variables:",number_of_incumbent_f
+      
+      incumbent_f_dep = {}
+      number_of_incumbent_f_dep = 0
+
+      for t in PLANE_TIMESTEP[p]:
+        incumbent_f_dep[t] = "f_dep#" + str(t)
+        thecontvars.append(incumbent_f_dep[t])
+        number_of_incumbent_f_dep += 1
+
+      #print "number of 'f_dep' variables:",number_of_incumbent_f_dep
+      
+      incumbent_f_arr = {}
+      number_of_incumbent_f_arr = 0
+      
+      for t in PLANE_TIMESTEP[p]:
+        incumbent_f_arr[t] = "f_arr#" + str(t)
+        thecontvars.append(incumbent_f_arr[t])
+        number_of_incumbent_f_arr += 1
+        
+      #print "number of 'f_arr' variables:",number_of_incumbent_f_arr
+
+      incumbent_w = {}
+      number_of_incumbent_w = 0
+
+      for t in PLANE_TIMESTEP[p]:
+        incumbent_w[t] = "w#" + str(t)
+        thecontvars.append(incumbent_w[t])
+        number_of_incumbent_w += 1
+        
+      #print "number of 'w' variables:",number_of_incumbent_w
+
+      # add all variables to model
+      
+      incumb_model.variables.add(names = thebinaryvars, lb = [0] * len(thebinaryvars), ub = [1] * len(thebinaryvars), types = ["B"] * len(thebinaryvars))
+
+      incumb_model.variables.add(names = thecontvars, lb = [0] * len(thecontvars), types = ["C"] * len(thecontvars))
+
+
+      # Constraints
+      
+      thenames = []
+      thelin_exprs = []
+      thesenses = []
+      therhss = []
+      
+      # schedule of requests
+      
+      number_of_request_one_dep = 0
+      
+      for r in INCUMBENT_REQUEST[p]:
+        thevars = []
+        thecoefs = []
+        for t in REQUEST_TIMESTEP[r]:
+          thevars.append(incumbent_x_dep[t,r])
+          thecoefs.append(1.0)
+          
+        if len(thevars) > 0:
+          thenames.append("request_one_dep_" + r)
+          thelin_exprs.append(cplex.SparsePair(thevars,thecoefs))
+          thesenses.append("E")
+          therhss.append(1.0)
+          number_of_request_one_dep += 1
+
+      #print "number of 'each request must depart' constraints:",number_of_request_one_dep
+
+      #
+      
+      number_of_request_one_arr = 0
+      
+      for r in INCUMBENT_REQUEST[p]:
+        thevars = []
+        thecoefs = []
+        for t in REQUEST_TIMESTEP[r]:
+          thevars.append(incumbent_x_arr[t,r])
+          thecoefs.append(1.0);
+        
+        if len(thevars) > 0:
+          thenames.append("request_one_arr_" + r)
+          thelin_exprs.append(cplex.SparsePair(thevars,thecoefs))
+          thesenses.append("E")
+          therhss.append(1.0)
+          number_of_request_one_arr += 1
+        
+      #print "number of 'each request must arrive' constraints:",number_of_request_one_arr
+
+      # 
+      
+      number_of_request_flow = 0
+      
+      for j in AIRPORT:
+        for r in INCUMBENT_REQUEST[p]:
+          for t in REQUEST_TIMESTEP[r]:
+            thevars = []
+            thecoefs = []
+
+            for i in AIRPORT:
+              if (i,j) in REQUEST_TRIP[r] and (i,j) in INCUMBENT_REQUEST_TRIP_PLUS[p,r]:
+                thevars.append(incumbent_x[i,j,t,r])
+                thecoefs.append(1.0)
+      
+            if j == REQUEST[r].request_departure:
+              thevars.append(incumbent_x_dep[t,r])
+              thecoefs.append(1.0)
+        
+            for k in AIRPORT:
+              if (j,k) in REQUEST_TRIP[r] and (j,k) in INCUMBENT_REQUEST_TRIP_PLUS[p,r] and (t + turnover_travel_timesteps[j,k,p]) in REQUEST_TIMESTEP[r]:
+                thevars.append(incumbent_x[j,k,(t + turnover_travel_timesteps[j,k,p]),r])
+                thecoefs.append(-1.0)
+          
+            if j == REQUEST[r].request_arrival:
+              thevars.append(incumbent_x_arr[t,r])
+              thecoefs.append(-1.0)
+        
+            if len(thevars) > 0:
+              thenames.append("request_flow_" + j + "_" + r + "_" + str(t))
+              thelin_exprs.append(cplex.SparsePair(thevars,thecoefs))
+              thesenses.append("E")
+              therhss.append(0.0)
+
+              number_of_request_flow += 1
+
+      #print "number of 'request flow' constraints:",number_of_request_flow
+
+
+      # schedule of planes
+            
+      thevars = []
+      thecoefs = []
+      
+      for t in PLANE_TIMESTEP[p]:
+        thevars.append(incumbent_y_dep[t])
+        thecoefs.append(1.0)
+      
+      thenames.append("plane_one_dep")
+      thelin_exprs.append(cplex.SparsePair(thevars,thecoefs))
+      thesenses.append("E")
+      therhss.append(1.0)
+
+      #print "number of 'airplane one departure' constraints: 1"
+      
+      #
+      
+      thevars = []
+      thecoefs = []
+      
+      for t in PLANE_TIMESTEP[p]:
+        thevars.append(incumbent_y_arr[t])
+        thecoefs.append(1.0)
+      
+      thenames.append("plane_one_arr")
+      thelin_exprs.append(cplex.SparsePair(thevars,thecoefs))
+      thesenses.append("E")
+      therhss.append(1.0)
+      
+      #print "number of 'airplane one arrival' constraints: 1"
+      
+      #
+      
+      number_of_plane_flow = 0
+      
+      for j in AIRPORT:
+        for t in PLANE_TIMESTEP[p]:
+          #print p,i
+          thevars = []
+          thecoefs = []
+        
+          for i in AIRPORT:
+            if (i,j) in INCUMBENT_TRIP_PLUS[p]:
+              thevars.append(incumbent_y[i,j,t])
+              thecoefs.append(1.0)
+        
+          if j == PLANE[p].plane_departure:
+            thevars.append(incumbent_y_dep[t])
+            thecoefs.append(1.0)
+      
+          for k in AIRPORT:
+            if (j,k) in INCUMBENT_TRIP_PLUS[p] and (t + turnover_travel_timesteps[j,k,p]) in PLANE_TIMESTEP[p]:
+              thevars.append(incumbent_y[j,k,(t + turnover_travel_timesteps[j,k,p])])
+              thecoefs.append(-1.0)
+    
+          if j == PLANE[p].plane_arrival:
+            thevars.append(incumbent_y_arr[t])
+            thecoefs.append(-1.0)
+    
+          if len(thevars) > 0:
+            thenames.append("plane_flow_" + j + "_" + str(t))
+            thelin_exprs.append(cplex.SparsePair(thevars,thecoefs))
+            thesenses.append("E")
+            therhss.append(0.0)
+
+            number_of_plane_flow += 1
+  
+      #print "number of 'plane flow' constraints:",number_of_plane_flow
+      
+
+      # seat limit of planes
+      
+      number_of_seat_limit = 0
+      
+      for i,j in INCUMBENT_TRIP[p]:
+        for t in PLANE_TIMESTEP[p]:
+          #print i,j,p
+          thevars = [incumbent_y[i,j,t]]
+          thecoefs = [-PLANE[p].seats]
+    
+          for r in INCUMBENT_REQUEST[p]:
+            if (i,j) in INCUMBENT_REQUEST_TRIP_PLUS[p,r] and t in REQUEST_TIMESTEP[r]:
+              thevars.append(incumbent_x[i,j,t,r])
+              thecoefs.append(REQUEST[r].passengers)
+      
+          if len(thevars) > 0:
+            thenames.append("seatlimit_" + i + "_" + j + "_" + str(t))
+            thelin_exprs.append(cplex.SparsePair(thevars,thecoefs))
+            thesenses.append("L")
+            therhss.append(0.0)
+
+            number_of_seat_limit += 1
+
+      #print "number of 'seat limit' constraints:",number_of_seat_limit
+
+      
+      # intermediate stop limit for passengers
+      
+      number_of_intermediate_stops = 0
+      
+      for r in INCUMBENT_REQUEST[p]:
+        thevars = []
+        thecoefs = []
+        #print r
+    
+        for i,j in REQUEST_TRIP[r]:
+          for t in REQUEST_TIMESTEP[r]:
+            if (i,j) in INCUMBENT_REQUEST_TRIP_PLUS[p,r]:
+              thevars.append(incumbent_x[i,j,t,r])
+              thecoefs.append(1.0);
+            
+        if len(thevars) > 0:
+          thenames.append("intermediate_stops_" + r)
+          thelin_exprs.append(cplex.SparsePair(thevars,thecoefs))
+          thesenses.append("L")
+          therhss.append(REQUEST[r].max_stops + 1)
+
+          number_of_intermediate_stops += 1
+          
+      #print "number of 'intermediate stops' constraints:",number_of_intermediate_stops
+      
+
+      # maximum detour for passengers (compared to direct flight)
+      
+      number_of_maxdetour = 0
+      
+      for r in INCUMBENT_REQUEST[p]:
+        thevars = []
+        thecoefs = []
+  
+        for i,j in REQUEST_TRIP[r]:
+          for t in REQUEST_TIMESTEP[r]:
+            if (i,j) in INCUMBENT_REQUEST_TRIP_PLUS[p,r]:
+              thevars.append(incumbent_x[i,j,t,r])
+              thecoefs.append(TRIP[i,j].distance)
+      
+        if len(thevars) > 0:
+          thenames.append("max_detour_" + r)
+          thelin_exprs.append(cplex.SparsePair(thevars,thecoefs))
+          thesenses.append("L")
+          therhss.append((1 + REQUEST[r].max_detour) * TRIP0[REQUEST[r].request_departure,REQUEST[r].request_arrival].distance)
+
+          number_of_maxdetour += 1
+          
+      #print "number of 'max detour' constraints:",number_of_maxdetour
+      
+
+      # fueling constraints
+      
+      number_of_noflight_nofuel = 0
+      
+      for i,j in INCUMBENT_TRIP_PLUS[p]:
+        for t in PLANE_TIMESTEP[p]:
+          #print i,j,p
+          thevars = [incumbent_f[i,j,t],incumbent_y[i,j,t]]
+          thecoefs = [1.0,-max_trip_fuel[i,j,p]]
+          
+          if len(thevars) > 0:
+            thenames.append("noflight_nofuel_" + i + "_" + j + "_" + str(t))
+            thelin_exprs.append(cplex.SparsePair(thevars,thecoefs))
+            thesenses.append("L")
+            therhss.append(0.0)
+
+            number_of_noflight_nofuel += 1
+            
+      #print "number of 'no flight, no fuel' constraints:",number_of_noflight_nofuel
+      
+      #
+      
+      number_of_fuelconsumption = 0
+      number_of_refueling = 0
+
+      for j in AIRPORT:
+        for t in PLANE_TIMESTEP[p]:
+          ##print j,p
+          thevars = []
+          thecoefs = []
+            
+          for i in AIRPORT:
+            if (i,j) in INCUMBENT_TRIP_PLUS[p]:
+              thevars.append(incumbent_f[i,j,t])
+              thecoefs.append(1.0)
+            
+          if j == PLANE[p].plane_departure:
+            thevars.append(incumbent_f_dep[t])
+            thecoefs.append(1.0)
+            
+          for k in AIRPORT:
+            if (j,k) in INCUMBENT_TRIP_PLUS[p] and (t + turnover_travel_timesteps[j,k,p]) in PLANE_TIMESTEP[p]:
+              thevars.append(incumbent_f[j,k,(t + turnover_travel_timesteps[j,k,p])])
+              thecoefs.append(-1.0)
+        
+              thevars.append(incumbent_y[j,k,(t + turnover_travel_timesteps[j,k,p])])
+              thecoefs.append(-fuelconsumption[j,k,p])
+              
+          if j == PLANE[p].plane_arrival:
+            thevars.append(incumbent_f_arr[t])
+            thecoefs.append(-1.0)
+          
+          if len(thevars) > 0:
+            thenames.append("fuelconsumption_" + j + "_" + str(t))
+            thelin_exprs.append(cplex.SparsePair(thevars,thecoefs))
+            therhss.append(0.0)
+
+            if AIRPORT[j].fuel[PLANE[p].required_fueltype] == '0':
+              thesenses.append("E")
+              number_of_fuelconsumption += 1
+            else:
+              thesenses.append("L")
+              number_of_refueling += 1
+
+      #print "number of 'fuelconsumption' constraints:",number_of_fuelconsumption
+      #print "number of 'refueling' constraints:",number_of_refueling
+
+      
+      # fuel limits at departure and arrival nodes
+      
+      number_of_departure_fuel_min = 0
+            
+      for t in PLANE_TIMESTEP[p]:
+        thevars = [incumbent_y_dep[t],incumbent_f_dep[t]]
+        thecoefs = [PLANE[p].departure_min_fuel, -1.0]
+        thenames.append("departure_fuel_min_" + str(t))
+        thelin_exprs.append(cplex.SparsePair(thevars,thecoefs))
+        thesenses.append("L")
+        therhss.append(0.0)
+
+        number_of_departure_fuel_min += 1
+        
+      #print "number of 'fuel min limit at departure' constraints:",number_of_departure_fuel_min
+      
+      #
+      
+      number_of_departure_fuel_max = 0
+            
+      for t in PLANE_TIMESTEP[p]:
+        thevars = [incumbent_y_dep[t],incumbent_f_dep[t]]
+        thecoefs = [-PLANE[p].departure_max_fuel, 1.0]
+        thenames.append("departure_fuel_max_" + str(t))
+        thelin_exprs.append(cplex.SparsePair(thevars,thecoefs))
+        thesenses.append("L")
+        therhss.append(0.0)
+
+        number_of_departure_fuel_max += 1
+        
+      #print "number of 'fuel max limit at departure' constraints:",number_of_departure_fuel_max
+      
+      #
+      
+      number_of_arrival_fuel_min = 0
+            
+      for t in PLANE_TIMESTEP[p]:
+        thevars = [incumbent_y_arr[t],incumbent_f_arr[t]]
+        thecoefs = [PLANE[p].arrival_min_fuel, -1.0]
+        thenames.append("arrival_fuel_min_" + str(t))
+        thelin_exprs.append(cplex.SparsePair(thevars,thecoefs))
+        thesenses.append("L")
+        therhss.append(0.0)
+
+        number_of_arrival_fuel_min += 1
+        
+      #print "number of 'fuel min limit at arrival' constraints:",number_of_arrival_fuel_min
+      
+      #
+      
+      number_of_arrival_fuel_max = 0
+            
+      for t in PLANE_TIMESTEP[p]:
+        thevars = [incumbent_y_arr[t],incumbent_f_arr[t]]
+        thecoefs = [-PLANE[p].arrival_max_fuel, 1.0]
+        thenames.append("arrival_fuel_max_" + str(t))
+        thelin_exprs.append(cplex.SparsePair(thevars,thecoefs))
+        thesenses.append("L")
+        therhss.append(0.0)
+
+        number_of_arrival_fuel_max += 1
+        
+      #print "number of 'fuel max limit at arrival' constraints:",number_of_arrival_fuel_max
+      
+      
+      # number of trips between airports
+
+      number_of_trips_between_airports = 0
+      
+      for i,j in INCUMBENT_TRIP[p]:
+        thevars = []
+        thecoefs = []
+        for t in PLANE_TIMESTEP[p]:
+          thevars.append(incumbent_y[i,j,t])
+          thecoefs.append(1.0)
+        if len(thevars) > 0:
+          thenames.append("trips_between_airports_" + i + "_" + j)
+          thelin_exprs.append(cplex.SparsePair(thevars,thecoefs))
+          thesenses.append("E")
+          therhss.append(trips_between_airports[p][i,j])
+
+          number_of_trips_between_airports += 1
+          
+      #print "number of 'trips between airports' constraints:",number_of_trips_between_airports
+      
+
+      # weight limits
+      
+      number_of_computeweight = 0
+      
+      for t in PLANE_TIMESTEP[p]:
+        #print i,j,p
+        thevars = [incumbent_w[t]]
+        thecoefs = [1.0]
+
+        for i,j in INCUMBENT_TRIP[p]:
+          for r in INCUMBENT_REQUEST[p]:
+            if (i,j) in INCUMBENT_REQUEST_TRIP_PLUS[p,r] and t in REQUEST_TIMESTEP[r]:
+              thevars.append(incumbent_x[i,j,t,r])
+              thecoefs.append(-REQUEST[r].weight)
+
+          thevars.append(incumbent_f[i,j,t])
+          thecoefs.append(-1.0)
+        
+        if len(thevars) > 0:
+          thenames.append("computeweight_" + str(t))
+          thelin_exprs.append(cplex.SparsePair(thevars,thecoefs))
+          thesenses.append("E")
+          therhss.append(0.0)
+
+          number_of_computeweight += 1
+            
+      #print "number of 'computeweight' constraints:",number_of_computeweight
+      
+      #
+      
+      number_of_weightlimit = 0
+      
+      for t in PLANE_TIMESTEP[p]:
+        #print i,j,p
+        thevars = [incumbent_w[t]]
+        thecoefs = [1.0]
+
+        for i,j in INCUMBENT_TRIP[p]:
+          thevars.append(incumbent_y[i,j,t])
+          thecoefs.append(-max_trip_payload[i,j,p])
+
+        if len(thevars) > 0:
+          thenames.append("weightlimit_" + str(t))
+          thelin_exprs.append(cplex.SparsePair(thevars,thecoefs))
+          thesenses.append("L")
+          therhss.append(0.0)
+
+          number_of_weightlimit += 1
+            
+      #print "number of 'weightlimit' constraints:",number_of_weightlimit
+    
+    
+      # add all constraints
+      
+      incumb_model.linear_constraints.add(names = thenames, lin_expr = thelin_exprs, senses = thesenses, rhs = therhss)
+      
+      
+      # OBJECTIVE FUNCTION 
+
+      incumb_model.objective.set_sense(model.objective.sense.minimize)
+
+
+      # output model
+
+      #incumb_model.write("INCMOD/incumbent_model." + p + "." + str(self.number_of_calls) + ".lp")
+
+      # surpress output 
+            
+      incumb_model.set_results_stream(None,fn=None)
+            
+      # solve model
+      
+      cb_t0 = time.clock()
+
+      incumb_model.solve()
+
+      self.callback_time += time.clock() - cb_t0
+    
+      # solution interpretation
+
+      incumb_solution = incumb_model.solution
+
+      if not incumb_solution.is_primal_feasible():
+        #print "solution for plane",p,"infeasible"
+        self.reject()
+        #print time.clock() - cb_t0
+        
+        # clean up & return
+        
+        del incumb_model;
+        del thevars;
+        del thecoefs;
+        del thenames;
+        del thesenses;
+        del therhss;
+        del thelin_exprs;
+        del incumb_solution;
+        
+        return
+      
+      #incumb_model.write("incumbent_model." + p + ".lp")
+
+
+    #print "feasible solution found at call: ",self.number_of_calls
+    
+    #if self.number_of_calls > 1000:
+    #  exit()
+    #print time.clock() - cb_t0
+
+    del incumb_model;
+    del thevars;
+    del thecoefs;
+    del thenames;
+    del thesenses;
+    del therhss;
+    del thelin_exprs;
+    del incumb_solution;
+        
+    return
+
+        
+class InfeasibleScheduleMIPCallback(LazyConstraintCallback):
+
+  def __call__(self):
+    
+    self.number_of_calls += 1
+
+    #print "Check Solution with MIP (IncumbentCallback) ",self.number_of_calls
+      
+    # get incumbent solution
+
+    value_of_y = {}
+
+    for i,j in TRIP0:
+      for p in PLANE:
+        value_of_y[i,j,p] = int(round(self.get_values(y[i,j,p])))
+        #if value_of_y[i,j,p] > 0:
+          #print "  from",i,"to",j,"plane",p,"   (",value_of_y[i,j,p],")"
+
+    value_of_x = {}
+
+    for r in REQUEST:
+      for i,j in REQUEST_TRIP0[r]:
+        for p in PLANE:
+          value_of_x[i,j,r,p] = int(round(self.get_values(x[i,j,r,p])))
+          #if value_of_x[i,j,r,p] > 0:
+          #  print "  from",i,"to",j,"request",r,"plane",p
+            
+    value_of_x_dep = {}
+    
+    for r in REQUEST:
+      for p in PLANE:
+        value_of_x_dep[r,p] = int(round(self.get_values(x_dep[r,p])))
+        #if value_of_x_dep[r,p] > 0:
+          #print "  request",r,"plane",p 
+    
+    value_of_x_arr = {}
+        
+    for r in REQUEST:
+      for p in PLANE:
+        value_of_x_arr[r,p] = int(round(self.get_values(x_arr[r,p])))
+        #if value_of_x_arr[r,p] > 0:
+          #print "  request",r,"plane",p
+    
+    # print data on screen
+    
+    #print
+    #
+    #for p in PLANE:
+    #  print "# plane",p
+    #  for i,j in TRIP0:
+    #    if value_of_y[i,j,p] > 0:
+    #      print p,i,j,value_of_y[i,j,p]
+    #
+    #print
+    #
+    #for p in PLANE:
+    #  print "# plane",p
+    #  for r in REQUEST:
+    #    if value_of_x_arr[r,p] > 0:
+    #      print p,r;
+    #      
+    #print
+    #
+    #for p in PLANE:
+    #  print "# plane",p
+    #  for r in REQUEST:
+    #    for i,j in REQUEST_TRIP0[r]:
+    #      if value_of_x[i,j,r,p] > 0:
+    #        print p,r,i,j
+    #
+    #print "\n----------------------------------\n\n"
+    
+    # define sets and parameters from incumbent 
+    
+    INCUMBENT_TRIP = {}
+    trips_between_airports = {}
+    
+    for p in PLANE:
+      INCUMBENT_TRIP[p] = {}
+      trips_between_airports[p] = {}
+      
+      for i,j in TRIP0:
+        if value_of_y[i,j,p] > 0:
+          INCUMBENT_TRIP[p][i,j] = 1
+          trips_between_airports[p][i,j] = value_of_y[i,j,p]
+    
+                
+    INCUMBENT_AIRPORT = {}
+    
+    for p in PLANE:
+      INCUMBENT_AIRPORT[p] = {}
+      for i,j in INCUMBENT_TRIP[p]:
+        INCUMBENT_AIRPORT[p][i] = 1
+        INCUMBENT_AIRPORT[p][j] = 1
+    
+    
+    INCUMBENT_TRIP_PLUS = {}
+    
+    for p in PLANE:
+      INCUMBENT_TRIP_PLUS[p] = {}
+      for i,j in INCUMBENT_TRIP[p]:
+        INCUMBENT_TRIP_PLUS[p][i,j] = 1
+      
+      for i in INCUMBENT_AIRPORT[p]:
+        INCUMBENT_TRIP_PLUS[p][i,i] = 1
+    
+    
+    INCUMBENT_REQUEST = {}
+    
+    for p in PLANE:
+      INCUMBENT_REQUEST[p] = {}
+      
+      for r in REQUEST:
+        if value_of_x_arr[r,p] > 0:
+          INCUMBENT_REQUEST[p][r] = 1
+    
+    
+    INCUMBENT_REQUEST_AIRPORT = {}
+    
+    for p in PLANE:
+      for r in REQUEST:
+        INCUMBENT_REQUEST_AIRPORT[p,r] = {}
+        
+        for i,j in REQUEST_TRIP0[r]:
+          if value_of_x[i,j,r,p] > 0:
+            INCUMBENT_REQUEST_AIRPORT[p,r][i] = 1
+            INCUMBENT_REQUEST_AIRPORT[p,r][j] = 1
+    
+    
+    INCUMBENT_REQUEST_TRIP_PLUS = {}
+
+    for p in PLANE:
+      for r in REQUEST:
+        INCUMBENT_REQUEST_TRIP_PLUS[p,r] = {}
+    
+        for i,j in REQUEST_TRIP0[r]:
+          if value_of_x[i,j,r,p] > 0:
+            INCUMBENT_REQUEST_TRIP_PLUS[p,r][i,j] = 1
+          
+        for i in INCUMBENT_REQUEST_AIRPORT[p,r]:
+          if i != REQUEST[r].request_departure and i != REQUEST[r].request_arrival:
+            INCUMBENT_REQUEST_TRIP_PLUS[p,r][i,i] = 1
+    
+    
+    # INCUMBENT CHECKER MODEL
+    
+    for p in PLANE:
+    
+      #print "checking plane ",p
+      
+      # set up MIP model
+        
+      incumb_model = cplex.Cplex()
+        
+                
+      # Variables
+    
+      incumbent_x = {}
+      number_of_incumbent_x = 0
+      thebinaryvars = []
+
+      for r in INCUMBENT_REQUEST[p]:
+        for i,j in INCUMBENT_REQUEST_TRIP_PLUS[p,r]:
+          for t in TIMESTEP:
+            if t in REQUEST_TIMESTEP[r]:
+              incumbent_x[i,j,t,r] = "x#" + i + "_" + j + "_" + str(t) + "_" + r
+              ##print incumbent_x[i,j,t,r] 
+              thebinaryvars.append(incumbent_x[i,j,t,r])
+              number_of_incumbent_x += 1
+                    
+      #print "number of 'x' variables:",number_of_incumbent_x
+            
+      incumbent_x_dep = {}
+      number_of_incumbent_x_dep = 0
+      
+      for r in INCUMBENT_REQUEST[p]:
+        for t in TIMESTEP:
+          if t in REQUEST_TIMESTEP[r]:
+            incumbent_x_dep[t,r] = "x_dep#" + str(t) + "_" + r
+            thebinaryvars.append(incumbent_x_dep[t,r])
+            number_of_incumbent_x_dep += 1
+                  
+      #print "number of 'x_dep' variables:",number_of_incumbent_x_dep
+
+      incumbent_x_arr = {}
+      number_of_incumbent_x_arr = 0
+
+      for r in INCUMBENT_REQUEST[p]:
+        for t in TIMESTEP:
+          if t in REQUEST_TIMESTEP[r]:
+            incumbent_x_arr[t,r] = "x_arr#" + str(t) + "_" + r
+            thebinaryvars.append(incumbent_x_arr[t,r])
+            number_of_incumbent_x_arr += 1
+            
+      #print "number of 'x_arr' variables:",number_of_incumbent_x_arr
+      
+      incumbent_y = {}
+      number_of_incumbent_y = 0
+
+      for i,j in INCUMBENT_TRIP_PLUS[p]:
+        for t in PLANE_TIMESTEP[p]:
+          incumbent_y[i,j,t] = "y#" + i + "_" + j + "_" + str(t)
+          thebinaryvars.append(incumbent_y[i,j,t])
+          number_of_incumbent_y += 1
+          
+      #print "number of 'y' variables:",number_of_incumbent_y
+
+      incumbent_y_dep = {}
+      number_of_incumbent_y_dep = 0
+      
+      for t in PLANE_TIMESTEP[p]:
+        incumbent_y_dep[t] = "y_dep#" + str(t)
+        thebinaryvars.append(incumbent_y_dep[t])
+        number_of_incumbent_y_dep += 1
+        
+      #print "number of 'y_dep' variables:",number_of_incumbent_y_dep
+      
+      incumbent_y_arr = {}
+      number_of_incumbent_y_arr = 0
+      
+      for t in PLANE_TIMESTEP[p]:
+        incumbent_y_arr[t] = "y_arr#" + str(t)
+        thebinaryvars.append(incumbent_y_arr[t])
+        number_of_incumbent_y_arr += 1
+        
+      #print "number of 'y_arr' variables:",number_of_incumbent_y_arr
+      
+      incumbent_f = {}
+      number_of_incumbent_f = 0
+      thecontvars = []
+
+      for i,j in INCUMBENT_TRIP_PLUS[p]:
+        for t in PLANE_TIMESTEP[p]:
+          incumbent_f[i,j,t] = "f#" + i + "_" + j + "_" + str(t)
+          thecontvars.append(incumbent_f[i,j,t])
+          number_of_incumbent_f += 1
+
+      #print "number of 'f' variables:",number_of_incumbent_f
+      
+      incumbent_f_dep = {}
+      number_of_incumbent_f_dep = 0
+
+      for t in PLANE_TIMESTEP[p]:
+        incumbent_f_dep[t] = "f_dep#" + str(t)
+        thecontvars.append(incumbent_f_dep[t])
+        number_of_incumbent_f_dep += 1
+
+      #print "number of 'f_dep' variables:",number_of_incumbent_f_dep
+      
+      incumbent_f_arr = {}
+      number_of_incumbent_f_arr = 0
+      
+      for t in PLANE_TIMESTEP[p]:
+        incumbent_f_arr[t] = "f_arr#" + str(t)
+        thecontvars.append(incumbent_f_arr[t])
+        number_of_incumbent_f_arr += 1
+        
+      #print "number of 'f_arr' variables:",number_of_incumbent_f_arr
+
+      incumbent_w = {}
+      number_of_incumbent_w = 0
+
+      for t in PLANE_TIMESTEP[p]:
+        incumbent_w[t] = "w#" + str(t)
+        thecontvars.append(incumbent_w[t])
+        number_of_incumbent_w += 1
+        
+      #print "number of 'w' variables:",number_of_incumbent_w
+
+      # add all variables to model
+      
+      incumb_model.variables.add(names = thebinaryvars, lb = [0] * len(thebinaryvars), ub = [1] * len(thebinaryvars), types = ["B"] * len(thebinaryvars))
+
+      incumb_model.variables.add(names = thecontvars, lb = [0] * len(thecontvars), types = ["C"] * len(thecontvars))
+
+
+      # Constraints
+      
+      thenames = []
+      thelin_exprs = []
+      thesenses = []
+      therhss = []
+      
+      # schedule of requests
+      
+      number_of_request_one_dep = 0
+      
+      for r in INCUMBENT_REQUEST[p]:
+        thevars = []
+        thecoefs = []
+        for t in REQUEST_TIMESTEP[r]:
+          thevars.append(incumbent_x_dep[t,r])
+          thecoefs.append(1.0)
+          
+        if len(thevars) > 0:
+          thenames.append("request_one_dep_" + r)
+          thelin_exprs.append(cplex.SparsePair(thevars,thecoefs))
+          thesenses.append("E")
+          therhss.append(1.0)
+          number_of_request_one_dep += 1
+
+      #print "number of 'each request must depart' constraints:",number_of_request_one_dep
+
+      #
+      
+      number_of_request_one_arr = 0
+      
+      for r in INCUMBENT_REQUEST[p]:
+        thevars = []
+        thecoefs = []
+        for t in REQUEST_TIMESTEP[r]:
+          thevars.append(incumbent_x_arr[t,r])
+          thecoefs.append(1.0);
+        
+        if len(thevars) > 0:
+          thenames.append("request_one_arr_" + r)
+          thelin_exprs.append(cplex.SparsePair(thevars,thecoefs))
+          thesenses.append("E")
+          therhss.append(1.0)
+          number_of_request_one_arr += 1
+        
+      #print "number of 'each request must arrive' constraints:",number_of_request_one_arr
+
+      # 
+      
+      number_of_request_flow = 0
+      
+      for j in AIRPORT:
+        for r in INCUMBENT_REQUEST[p]:
+          for t in REQUEST_TIMESTEP[r]:
+            thevars = []
+            thecoefs = []
+
+            for i in AIRPORT:
+              if (i,j) in REQUEST_TRIP[r] and (i,j) in INCUMBENT_REQUEST_TRIP_PLUS[p,r]:
+                thevars.append(incumbent_x[i,j,t,r])
+                thecoefs.append(1.0)
+      
+            if j == REQUEST[r].request_departure:
+              thevars.append(incumbent_x_dep[t,r])
+              thecoefs.append(1.0)
+        
+            for k in AIRPORT:
+              if (j,k) in REQUEST_TRIP[r] and (j,k) in INCUMBENT_REQUEST_TRIP_PLUS[p,r] and (t + turnover_travel_timesteps[j,k,p]) in REQUEST_TIMESTEP[r]:
+                thevars.append(incumbent_x[j,k,(t + turnover_travel_timesteps[j,k,p]),r])
+                thecoefs.append(-1.0)
+          
+            if j == REQUEST[r].request_arrival:
+              thevars.append(incumbent_x_arr[t,r])
+              thecoefs.append(-1.0)
+        
+            if len(thevars) > 0:
+              thenames.append("request_flow_" + j + "_" + r + "_" + str(t))
+              thelin_exprs.append(cplex.SparsePair(thevars,thecoefs))
+              thesenses.append("E")
+              therhss.append(0.0)
+
+              number_of_request_flow += 1
+
+      #print "number of 'request flow' constraints:",number_of_request_flow
+
+
+      # schedule of planes
+            
+      thevars = []
+      thecoefs = []
+      
+      for t in PLANE_TIMESTEP[p]:
+        thevars.append(incumbent_y_dep[t])
+        thecoefs.append(1.0)
+      
+      thenames.append("plane_one_dep")
+      thelin_exprs.append(cplex.SparsePair(thevars,thecoefs))
+      thesenses.append("E")
+      therhss.append(1.0)
+
+      #print "number of 'airplane one departure' constraints: 1"
+      
+      #
+      
+      thevars = []
+      thecoefs = []
+      
+      for t in PLANE_TIMESTEP[p]:
+        thevars.append(incumbent_y_arr[t])
+        thecoefs.append(1.0)
+      
+      thenames.append("plane_one_arr")
+      thelin_exprs.append(cplex.SparsePair(thevars,thecoefs))
+      thesenses.append("E")
+      therhss.append(1.0)
+      
+      #print "number of 'airplane one arrival' constraints: 1"
+      
+      #
+      
+      number_of_plane_flow = 0
+      
+      for j in AIRPORT:
+        for t in PLANE_TIMESTEP[p]:
+          #print p,i
+          thevars = []
+          thecoefs = []
+        
+          for i in AIRPORT:
+            if (i,j) in INCUMBENT_TRIP_PLUS[p]:
+              thevars.append(incumbent_y[i,j,t])
+              thecoefs.append(1.0)
+        
+          if j == PLANE[p].plane_departure:
+            thevars.append(incumbent_y_dep[t])
+            thecoefs.append(1.0)
+      
+          for k in AIRPORT:
+            if (j,k) in INCUMBENT_TRIP_PLUS[p] and (t + turnover_travel_timesteps[j,k,p]) in PLANE_TIMESTEP[p]:
+              thevars.append(incumbent_y[j,k,(t + turnover_travel_timesteps[j,k,p])])
+              thecoefs.append(-1.0)
+    
+          if j == PLANE[p].plane_arrival:
+            thevars.append(incumbent_y_arr[t])
+            thecoefs.append(-1.0)
+    
+          if len(thevars) > 0:
+            thenames.append("plane_flow_" + j + "_" + str(t))
+            thelin_exprs.append(cplex.SparsePair(thevars,thecoefs))
+            thesenses.append("E")
+            therhss.append(0.0)
+
+            number_of_plane_flow += 1
+  
+      #print "number of 'plane flow' constraints:",number_of_plane_flow
+      
+
+      # seat limit of planes
+      
+      number_of_seat_limit = 0
+      
+      for i,j in INCUMBENT_TRIP[p]:
+        for t in PLANE_TIMESTEP[p]:
+          #print i,j,p
+          thevars = [incumbent_y[i,j,t]]
+          thecoefs = [-PLANE[p].seats]
+    
+          for r in INCUMBENT_REQUEST[p]:
+            if (i,j) in INCUMBENT_REQUEST_TRIP_PLUS[p,r] and t in REQUEST_TIMESTEP[r]:
+              thevars.append(incumbent_x[i,j,t,r])
+              thecoefs.append(REQUEST[r].passengers)
+      
+          if len(thevars) > 0:
+            thenames.append("seatlimit_" + i + "_" + j + "_" + str(t))
+            thelin_exprs.append(cplex.SparsePair(thevars,thecoefs))
+            thesenses.append("L")
+            therhss.append(0.0)
+
+            number_of_seat_limit += 1
+
+      #print "number of 'seat limit' constraints:",number_of_seat_limit
+
+      
+      # intermediate stop limit for passengers
+      
+      number_of_intermediate_stops = 0
+      
+      for r in INCUMBENT_REQUEST[p]:
+        thevars = []
+        thecoefs = []
+        #print r
+    
+        for i,j in REQUEST_TRIP[r]:
+          for t in REQUEST_TIMESTEP[r]:
+            if (i,j) in INCUMBENT_REQUEST_TRIP_PLUS[p,r]:
+              thevars.append(incumbent_x[i,j,t,r])
+              thecoefs.append(1.0);
+            
+        if len(thevars) > 0:
+          thenames.append("intermediate_stops_" + r)
+          thelin_exprs.append(cplex.SparsePair(thevars,thecoefs))
+          thesenses.append("L")
+          therhss.append(REQUEST[r].max_stops + 1)
+
+          number_of_intermediate_stops += 1
+          
+      #print "number of 'intermediate stops' constraints:",number_of_intermediate_stops
+      
+
+      # maximum detour for passengers (compared to direct flight)
+      
+      number_of_maxdetour = 0
+      
+      for r in INCUMBENT_REQUEST[p]:
+        thevars = []
+        thecoefs = []
+  
+        for i,j in REQUEST_TRIP[r]:
+          for t in REQUEST_TIMESTEP[r]:
+            if (i,j) in INCUMBENT_REQUEST_TRIP_PLUS[p,r]:
+              thevars.append(incumbent_x[i,j,t,r])
+              thecoefs.append(TRIP[i,j].distance)
+      
+        if len(thevars) > 0:
+          thenames.append("max_detour_" + r)
+          thelin_exprs.append(cplex.SparsePair(thevars,thecoefs))
+          thesenses.append("L")
+          therhss.append((1 + REQUEST[r].max_detour) * TRIP0[REQUEST[r].request_departure,REQUEST[r].request_arrival].distance)
+
+          number_of_maxdetour += 1
+          
+      #print "number of 'max detour' constraints:",number_of_maxdetour
+      
+
+      # fueling constraints
+      
+      number_of_noflight_nofuel = 0
+      
+      for i,j in INCUMBENT_TRIP_PLUS[p]:
+        for t in PLANE_TIMESTEP[p]:
+          #print i,j,p
+          thevars = [incumbent_f[i,j,t],incumbent_y[i,j,t]]
+          thecoefs = [1.0,-max_trip_fuel[i,j,p]]
+          
+          if len(thevars) > 0:
+            thenames.append("noflight_nofuel_" + i + "_" + j + "_" + str(t))
+            thelin_exprs.append(cplex.SparsePair(thevars,thecoefs))
+            thesenses.append("L")
+            therhss.append(0.0)
+
+            number_of_noflight_nofuel += 1
+            
+      #print "number of 'no flight, no fuel' constraints:",number_of_noflight_nofuel
+      
+      #
+      
+      number_of_fuelconsumption = 0
+      number_of_refueling = 0
+
+      for j in AIRPORT:
+        for t in PLANE_TIMESTEP[p]:
+          ##print j,p
+          thevars = []
+          thecoefs = []
+            
+          for i in AIRPORT:
+            if (i,j) in INCUMBENT_TRIP_PLUS[p]:
+              thevars.append(incumbent_f[i,j,t])
+              thecoefs.append(1.0)
+            
+          if j == PLANE[p].plane_departure:
+            thevars.append(incumbent_f_dep[t])
+            thecoefs.append(1.0)
+            
+          for k in AIRPORT:
+            if (j,k) in INCUMBENT_TRIP_PLUS[p] and (t + turnover_travel_timesteps[j,k,p]) in PLANE_TIMESTEP[p]:
+              thevars.append(incumbent_f[j,k,(t + turnover_travel_timesteps[j,k,p])])
+              thecoefs.append(-1.0)
+        
+              thevars.append(incumbent_y[j,k,(t + turnover_travel_timesteps[j,k,p])])
+              thecoefs.append(-fuelconsumption[j,k,p])
+              
+          if j == PLANE[p].plane_arrival:
+            thevars.append(incumbent_f_arr[t])
+            thecoefs.append(-1.0)
+          
+          if len(thevars) > 0:
+            thenames.append("fuelconsumption_" + j + "_" + str(t))
+            thelin_exprs.append(cplex.SparsePair(thevars,thecoefs))
+            therhss.append(0.0)
+
+            if AIRPORT[j].fuel[PLANE[p].required_fueltype] == '0':
+              thesenses.append("E")
+              number_of_fuelconsumption += 1
+            else:
+              thesenses.append("L")
+              number_of_refueling += 1
+
+      #print "number of 'fuelconsumption' constraints:",number_of_fuelconsumption
+      #print "number of 'refueling' constraints:",number_of_refueling
+
+      
+      # fuel limits at departure and arrival nodes
+      
+      number_of_departure_fuel_min = 0
+            
+      for t in PLANE_TIMESTEP[p]:
+        thevars = [incumbent_y_dep[t],incumbent_f_dep[t]]
+        thecoefs = [PLANE[p].departure_min_fuel, -1.0]
+        thenames.append("departure_fuel_min_" + str(t))
+        thelin_exprs.append(cplex.SparsePair(thevars,thecoefs))
+        thesenses.append("L")
+        therhss.append(0.0)
+
+        number_of_departure_fuel_min += 1
+        
+      #print "number of 'fuel min limit at departure' constraints:",number_of_departure_fuel_min
+      
+      #
+      
+      number_of_departure_fuel_max = 0
+            
+      for t in PLANE_TIMESTEP[p]:
+        thevars = [incumbent_y_dep[t],incumbent_f_dep[t]]
+        thecoefs = [-PLANE[p].departure_max_fuel, 1.0]
+        thenames.append("departure_fuel_max_" + str(t))
+        thelin_exprs.append(cplex.SparsePair(thevars,thecoefs))
+        thesenses.append("L")
+        therhss.append(0.0)
+
+        number_of_departure_fuel_max += 1
+        
+      #print "number of 'fuel max limit at departure' constraints:",number_of_departure_fuel_max
+      
+      #
+      
+      number_of_arrival_fuel_min = 0
+            
+      for t in PLANE_TIMESTEP[p]:
+        thevars = [incumbent_y_arr[t],incumbent_f_arr[t]]
+        thecoefs = [PLANE[p].arrival_min_fuel, -1.0]
+        thenames.append("arrival_fuel_min_" + str(t))
+        thelin_exprs.append(cplex.SparsePair(thevars,thecoefs))
+        thesenses.append("L")
+        therhss.append(0.0)
+
+        number_of_arrival_fuel_min += 1
+        
+      #print "number of 'fuel min limit at arrival' constraints:",number_of_arrival_fuel_min
+      
+      #
+      
+      number_of_arrival_fuel_max = 0
+            
+      for t in PLANE_TIMESTEP[p]:
+        thevars = [incumbent_y_arr[t],incumbent_f_arr[t]]
+        thecoefs = [-PLANE[p].arrival_max_fuel, 1.0]
+        thenames.append("arrival_fuel_max_" + str(t))
+        thelin_exprs.append(cplex.SparsePair(thevars,thecoefs))
+        thesenses.append("L")
+        therhss.append(0.0)
+
+        number_of_arrival_fuel_max += 1
+        
+      #print "number of 'fuel max limit at arrival' constraints:",number_of_arrival_fuel_max
+      
+      
+      # number of trips between airports
+
+      number_of_trips_between_airports = 0
+      
+      for i,j in INCUMBENT_TRIP[p]:
+        thevars = []
+        thecoefs = []
+        for t in PLANE_TIMESTEP[p]:
+          thevars.append(incumbent_y[i,j,t])
+          thecoefs.append(1.0)
+        if len(thevars) > 0:
+          thenames.append("trips_between_airports_" + i + "_" + j)
+          thelin_exprs.append(cplex.SparsePair(thevars,thecoefs))
+          thesenses.append("E")
+          therhss.append(trips_between_airports[p][i,j])
+
+          number_of_trips_between_airports += 1
+          
+      #print "number of 'trips between airports' constraints:",number_of_trips_between_airports
+      
+
+      # weight limits
+      
+      number_of_computeweight = 0
+      
+      for t in PLANE_TIMESTEP[p]:
+        #print i,j,p
+        thevars = [incumbent_w[t]]
+        thecoefs = [1.0]
+
+        for i,j in INCUMBENT_TRIP[p]:
+          for r in INCUMBENT_REQUEST[p]:
+            if (i,j) in INCUMBENT_REQUEST_TRIP_PLUS[p,r] and t in REQUEST_TIMESTEP[r]:
+              thevars.append(incumbent_x[i,j,t,r])
+              thecoefs.append(-REQUEST[r].weight)
+
+          thevars.append(incumbent_f[i,j,t])
+          thecoefs.append(-1.0)
+        
+        if len(thevars) > 0:
+          thenames.append("computeweight_" + str(t))
+          thelin_exprs.append(cplex.SparsePair(thevars,thecoefs))
+          thesenses.append("E")
+          therhss.append(0.0)
+
+          number_of_computeweight += 1
+            
+      #print "number of 'computeweight' constraints:",number_of_computeweight
+      
+      #
+      
+      number_of_weightlimit = 0
+      
+      for t in PLANE_TIMESTEP[p]:
+        #print i,j,p
+        thevars = [incumbent_w[t]]
+        thecoefs = [1.0]
+
+        for i,j in INCUMBENT_TRIP[p]:
+          thevars.append(incumbent_y[i,j,t])
+          thecoefs.append(-max_trip_payload[i,j,p])
+
+        if len(thevars) > 0:
+          thenames.append("weightlimit_" + str(t))
+          thelin_exprs.append(cplex.SparsePair(thevars,thecoefs))
+          thesenses.append("L")
+          therhss.append(0.0)
+
+          number_of_weightlimit += 1
+            
+      #print "number of 'weightlimit' constraints:",number_of_weightlimit
+    
+    
+      # add all constraints
+      
+      incumb_model.linear_constraints.add(names = thenames, lin_expr = thelin_exprs, senses = thesenses, rhs = therhss)
+      
+      
+      # OBJECTIVE FUNCTION 
+
+      incumb_model.objective.set_sense(model.objective.sense.minimize)
+
+
+      # output model
+
+      #incumb_model.write("INCMOD/incumbent_model." + p + "." + str(self.number_of_calls) + ".lp")
+
+      # surpress output 
+            
+      incumb_model.set_results_stream(None,fn=None)
+            
+      # solve model
+      
+      cb_t0 = time.clock()
+
+      incumb_model.solve()
+
+      self.callback_time += time.clock() - cb_t0
+    
+      # solution interpretation
+
+      incumb_solution = incumb_model.solution
+
+      if not incumb_solution.is_primal_feasible():
+        #print "solution for plane",p,"infeasible"
+        #print time.clock() - cb_t0
+        
+        # build cut: 
+        # sum_{i : val(x_i) = 1} x_i + sum_{i : val(x_i) = 0} (1 - x_i) <= card({i : val(x_i) = 1} u {i : val(x_i) = 0}) - 1
+        # <=> 
+        # sum_{i : val(x_i) = 1} x_i - sum_{i : val(x_i) = 0} x_i <= card({i : val(x_i) = 1}) - 1
+        
+        therhs = 0
+        thevars = []
+        thecoefs = []
+        
+        for i,j in TRIP0:
+          for p in PLANE:
+            if value_of_y[i,j,p] > 0:
+              k = value_of_y[i,j,p]
+              thevars.append(eta[i,j,p,k])
+              thecoefs.append(1.0)
+              therhs += 1.0
+            else:
+              for k in range(1,3):
+                thevars.append(eta[i,j,p,k])
+                thecoefs.append(-1.0)
+              therhs += 0.0
+
+        for r in REQUEST:
+          for i,j in REQUEST_TRIP0[r]:
+            for p in PLANE:
+              if value_of_x[i,j,r,p] > 0:
+                thevars.append(x[i,j,r,p])
+                thecoefs.append(1.0)
+                therhs += 1.0
+              #else:
+              #  thevars.append(x[i,j,r,p])
+              #  thecoefs.append(-1.0)
+              #  therhs += 0.0
+                
+        for r in REQUEST:
+          for p in PLANE:
+            if value_of_x_dep[r,p] > 0:
+              thevars.append(x_dep[r,p])
+              thecoefs.append(1.0)
+              therhs += 1.0
+            #else:
+            #  thevars.append(x_dep[r,p])
+            #  thecoefs.append(-1.0)
+            #  therhs += 0.0
+              
+        for r in REQUEST:
+          for p in PLANE:
+            if value_of_x_arr[r,p] > 0:
+              thevars.append(x_arr[r,p])
+              thecoefs.append(1.0)
+              therhs += 1.0
+            #else:
+            #  thevars.append(x_arr[r,p])
+            #  thecoefs.append(-1.0)
+            #  therhs += 0.0
+
+        #print thevars
+        #print thecoefs
+        #print therhs
+        
+        self.add(constraint = [thevars,thecoefs], sense = "L",rhs = therhs - 1.0)
+      
+      #incumb_model.write("incumbent_model." + p + ".lp")
+
+
+    #print "feasible solution found at call: ",self.number_of_calls
+    
+    #if self.number_of_calls > 1000:
+    #  exit()
+    #print time.clock() - cb_t0
+        
+    return
+
+
+# -------
+# classes
+# -------
+
+class __PLANE__(object):
+  def __init__(self,cost=None,seats=None,plane_departure=None,departure_min_fuel=None,departure_max_fuel=None,plane_arrival=None,arrival_min_fuel=None,arrival_max_fuel=None,required_fueltype=None,fuel=None,speed=None,max_fuel=None,empty_weight=None,add_turnover_time=None,reserve_fuel=None,contigence_ratio=None,pilot_weight=None):
+    self.cost = float(cost)
+    self.seats = int(seats)
+    self.plane_departure = plane_departure
+    self.departure_min_fuel = float(departure_min_fuel)
+    self.departure_max_fuel = float(departure_max_fuel)
+    self.plane_arrival = plane_arrival
+    self.arrival_min_fuel = float(arrival_min_fuel)
+    self.arrival_max_fuel = float(arrival_max_fuel)
+    self.required_fueltype = int(required_fueltype)
+    self.fuel = float(fuel)
+    self.speed = float(speed)
+    self.max_fuel = float(max_fuel)
+    self.empty_weight = float(empty_weight)
+    self.add_turnover_time = int(add_turnover_time)
+    self.reserve_fuel = float(reserve_fuel)
+    self.contigence_ratio = float(contigence_ratio)
+    self.pilot_weight = float(pilot_weight)
+
+class __AIRPORT__(object):
+  def __init__(self,turnover_time=None):
+    self.turnover_time = int(turnover_time)
+    self.fuel = {}
+
+class __REQUEST__(object):
+  def __init__(self,request_departure=None,request_arrival=None,earliest_departure_time=None,earliest_departure_day=None,latest_arrival_time=None,latest_arrival_day=None,passengers=None,weight=None,max_stops=None,max_detour=None):
+    self.request_departure = request_departure
+    self.request_arrival = request_arrival
+    self.earliest_departure_time = int(earliest_departure_time)
+    self.earliest_departure_day = int(earliest_departure_day)
+    self.latest_arrival_time = int(latest_arrival_time)
+    self.latest_arrival_day = int(latest_arrival_day)
+    self.passengers = int(passengers)
+    self.weight = float(weight)
+    self.max_stops = int(max_stops)
+    self.max_detour = float(max_detour) 
+
+    self.earliest_departure = 1440 * (self.earliest_departure_day - 1) + self.earliest_departure_time
+    self.latest_arrival = 1440 * (self.latest_arrival_day - 1) + self.latest_arrival_time
+
+class __WEIGHTLIMIT__(object):
+  def __init__(self,max_takeoff_weight=None,max_landing_weight=None):
+    self.max_takeoff_weight = float(max_takeoff_weight)
+    self.max_landing_weight = float(max_landing_weight)
+
+class __TRIP__(object):
+  def __init__(self,distance=None):
+    self.distance = float(distance)
+    
+    
+# prepare reading and parsing
 
 comment_line = re.compile('#');
 
-def printRequests(Request):
-    for key,request in Request.iteritems():
-        request.printMe()
-            
 #directory = sys.argv[1]
-directory='Data'
+#strategy = sys.argv[2]
+
+strategy = 0
+directory = 'Testinstances/A2-BUF_A2-AIV'
 
 # ---------------------
 # reading airplanes.dat
@@ -266,15 +1741,15 @@ file.close()
 
 entries = re.split("\n+", airplanes_data)
 
-Airplane = {}
+PLANE = {}
 
 for line in entries:
-    if comment_line.search(line) == None:
-        datas = re.split("\s+", line)
-        if len(datas) == 17:
-            #print datas
-            ID,cost,seats,origin,departure_min_fuel,departure_max_fuel,destination,arrival_min_fuel,arrival_max_fuel,required_fueltype,fuel,speed,max_fuel,empty_weight,add_turnover_time,reserve_fuel,contigence_ratio = datas
-            Airplane[ID] = AIRPLANE(cost,seats,origin,departure_min_fuel,departure_max_fuel,destination,arrival_min_fuel,arrival_max_fuel,required_fueltype,fuel,speed,max_fuel,empty_weight,add_turnover_time,reserve_fuel,contigence_ratio)
+  if comment_line.search(line) == None:
+    datas = re.split("\s+", line)
+    if len(datas) == 18:
+      print datas
+      ID,cost,seats,plane_departure,departure_min_fuel,departure_max_fuel,plane_arrival,arrival_min_fuel,arrival_max_fuel,required_fueltype,fuel,speed,max_fuel,empty_weight,add_turnover_time,reserve_fuel,contigence_ratio,pilot_weight = datas
+      PLANE[ID] = __PLANE__(cost,seats,plane_departure,departure_min_fuel,departure_max_fuel,plane_arrival,arrival_min_fuel,arrival_max_fuel,required_fueltype,fuel,speed,max_fuel,empty_weight,add_turnover_time,reserve_fuel,contigence_ratio,pilot_weight)
 
 
 # --------------------
@@ -289,39 +1764,40 @@ file.close()
 
 entries = re.split("\n+", airports_data)
 
-Airport = {}
+AIRPORT = {}
 
 for line in entries:
-    if comment_line.search(line) == None:
-        datas = re.split("\s+", line)
-        if len(datas) == 3:
-            #print datas
-            ID, turnover_time, maintenance = datas
-            Airport[ID] = AIRPORT(turnover_time,maintenance)
+  if comment_line.search(line) == None:
+    datas = re.split("\s+", line)
+    if len(datas) == 2:
+      print datas
+      ID, turnover_time = datas
+      AIRPORT[ID] = __AIRPORT__(turnover_time)
 
 
-# --------------------
-# reading controls.dat
-# --------------------
+# --------------------------
+# reading columnsolution.dat
+# --------------------------
 
-print "reading '"+directory+"/controls.dat'"
+print "reading '"+directory+"/columnsolution.dat'"
 
-file = open(directory+"/controls.dat", "r")
-controls_data = file.read()
+file = open(directory+"/columnsolution.dat", "r")
+columnsolution_data = file.read()
 file.close()
 
-entries = re.split("\n+", controls_data)
+entries = re.split("\n+", columnsolution_data)
+
+COLUMNSOLUTION = Set()
 
 for line in entries:
-    if comment_line.search(line) == None:
-        datas = re.split("\s+", line)
-        if len(datas) == 2:
-            #print datas
-            ID, value = datas
-            if ID == "1":
-                max_stops = int(value)
-            if ID == "2":
-                delta_time = int(value) / 5
+  if comment_line.search(line) == None:
+    datas = re.split("\s+", line)
+    if len(datas) == 5:
+      print datas
+      plane, origin, destination, hour, minute = datas
+      COLUMNSOLUTION.add((plane, origin, destination, hour, minute))
+
+#print Columnsolution
 
 
 # ---------------------
@@ -336,15 +1812,15 @@ file.close()
 
 entries = re.split("\n+", distances_data)
 
-Distance = {}
+TRIP = {}
 
 for line in entries:
-    if comment_line.search(line) == None:
-        datas = re.split("\s+", line)
-        if len(datas) == 3:
-            #print datas
-            origin, destination, dist = datas
-            Distance[origin,destination] = float(dist)
+  if comment_line.search(line) == None:
+    datas = re.split("\s+", line)
+    if len(datas) == 3:
+      print datas
+      origin, destination, distance = datas
+      TRIP[origin,destination] = __TRIP__(distance)
 
 
 # -----------------
@@ -360,12 +1836,12 @@ file.close()
 entries = re.split("\n+", fuels_data)
 
 for line in entries:
-    if comment_line.search(line) == None:
-        datas = re.split("\s+", line)
-        if len(datas) == 3:
-            #print datas
-            airport, fuelID, isAvailable = datas
-            Airport[airport].fuel[fuelID] = isAvailable
+  if comment_line.search(line) == None:
+    datas = re.split("\s+", line)
+    if len(datas) == 3:
+      print datas
+      airport, fuelID, isAvailable = datas
+      AIRPORT[airport].fuel[int(fuelID)] = isAvailable
 
 
 # --------------------
@@ -380,15 +1856,38 @@ file.close()
 
 entries = re.split("\n+", requests_data)
 
-Request = {}
+REQUEST = {}
 
 for line in entries:
-    if comment_line.search(line) == None:
-        datas = re.split("\s+", line)
-        if len(datas) == 9:
-            #print datas
-            ID,origin,destination,earliest_departure_time,earliest_departure_day,latest_arrival_time,latest_arrival_day,passengers,weight = datas
-            Request[ID] = REQUEST(origin,destination,earliest_departure_time,earliest_departure_day,latest_arrival_time,latest_arrival_day,passengers,weight)
+  if comment_line.search(line) == None:
+    datas = re.split("\s+", line)
+    if len(datas) == 11:
+      print datas
+      ID,origin,destination,earliest_departure_time,earliest_departure_day,latest_arrival_time,latest_arrival_day,passengers,weight,max_stops,max_detour = datas
+      REQUEST[ID] = __REQUEST__(origin,destination,earliest_departure_time,earliest_departure_day,latest_arrival_time,latest_arrival_day,passengers,weight,max_stops,max_detour)
+
+
+# ------------------------
+# reading timedelta.dat
+# ------------------------
+
+print "reading '"+directory+"/timedelta.dat'"
+
+file = open(directory+"/timedelta.dat", "r")
+timedelta_data = file.read()
+file.close()
+
+entries = re.split("\n+", timedelta_data)
+
+timedelta = 1
+
+for line in entries:
+  if comment_line.search(line) == None:
+    datas = re.split("\s+", line)
+    if len(datas) == 2:
+      print datas
+      ID,timedelta = datas
+      timedelta = int(timedelta) # conversion from string to int
 
 
 # ------------------------
@@ -403,622 +1902,901 @@ file.close()
 
 entries = re.split("\n+", weightlimits_data)
 
-Weightlimit = {}
+WEIGHTLIMIT = {}
 
 for line in entries:
-    if comment_line.search(line) == None:
-        datas = re.split("\s+", line)
-        if len(datas) == 4:
-            #print datas
-            airport, airplane, max_takeoff_weight, max_landing_weight = datas
-            Weightlimit[airport,airplane] = WEIGHTLIMIT(max_takeoff_weight,max_landing_weight)
+  if comment_line.search(line) == None:
+    datas = re.split("\s+", line)
+    if len(datas) == 4:
+      print datas
+      airport, airplane, max_takeoff_weight, max_landing_weight = datas
+      WEIGHTLIMIT[airport,airplane] = __WEIGHTLIMIT__(max_takeoff_weight,max_landing_weight)
+
+
+# --------------------------
+# reading columnsolution.dat
+# --------------------------
+
+print "reading '"+directory+"/columnsolution.dat'"
+
+file = open(directory+"/columnsolution.dat", "r")
+solution_data = file.read()
+file.close()
+
+entries = re.split("\n+", solution_data)
+
+PLANE_SOLUTION = {}
+
+for line in entries:
+  if comment_line.search(line) == None:
+    datas = re.split("\s+", line)
+    if len(datas) == 5:
+      print datas
+      plane, origin, destination, hour, minute = datas
+      PLANE_SOLUTION[plane, origin, destination, hour, minute] = 1
+
+
+# --------------------------
+# reading columnsolution.dat
+# --------------------------
+
+print "reading '"+directory+"/requestsolution.dat'"
+
+file = open(directory+"/requestsolution.dat", "r")
+solution_data = file.read()
+file.close()
+
+entries = re.split("\n+", solution_data)
+
+REQUEST_SOLUTION = {}
+
+for line in entries:
+  if comment_line.search(line) == None:
+    datas = re.split("\s+", line)
+    if len(datas) == 6:
+      print datas
+      plane, request, origin, destination, hour, minute = datas
+      REQUEST_SOLUTION[plane, request, origin, destination, hour, minute] = 1
 
 
 # --------------------------------
 # generating further instance data
 # --------------------------------
 
-# travelcost
+turnover_timesteps = {}
 
-Travelcost = {}
+for i in AIRPORT:
+  for p in PLANE:
+    turnover_timesteps[i,p] = int(max(1,math.ceil((AIRPORT[i].turnover_time + PLANE[p].add_turnover_time) / timedelta)))
 
-for p in Airplane:
-    for i, j in Distance:
-        Travelcost[i,j,p] = math.ceil(Distance[i,j] * Airplane[p].cost)
 
-Traveltime = {}
+travelcost = {}
 
-for p in Airplane:
-    for i, j in Distance:
-        Traveltime[i,j,p] = int(math.floor(Distance[i,j] / ((Airplane[p].speed / 60) * 5)) )
+for p in PLANE:
+  for i, j in TRIP:
+    travelcost[i,j,p] = TRIP[i,j].distance * PLANE[p].cost
 
-Fuelconsumption = {}
 
-for p in Airplane:
-    for i, j in Distance:
-        Fuelconsumption[i,j,p] = math.ceil(Distance[i,j] * Airplane[p].fuel * Airplane[p].contigence_ratio);
+travel_time = {}
+
+for p in PLANE:
+  for i, j in TRIP:
+    #travel_time[i,j,p] = int(math.floor(TRIP[i,j].distance / ((PLANE[p].speed / 60) * 5)) * 5)
+    travel_time[i,j,p] = TRIP[i,j].distance / (PLANE[p].speed / 60)
+
+
+travel_timesteps = {}
+
+for p in PLANE:
+  for i, j in TRIP:
+    travel_timesteps[i,j,p] = int(max(1,math.ceil(travel_time[i,j,p] / timedelta)))
+
+
+turnover_travel_timesteps = {}
+
+for p in PLANE:
+  for i, j in TRIP:
+    if i == j:
+      turnover_travel_timesteps[i,j,p] = 1
+    else:
+      turnover_travel_timesteps[i,j,p] = int(travel_timesteps[i,j,p] + turnover_timesteps[i,p])
+
+
+max_takeoff_payload = {}
+
+for p in PLANE:
+  for i in AIRPORT:
+    max_takeoff_payload[i,p] = WEIGHTLIMIT[i,p].max_takeoff_weight - PLANE[p].empty_weight - PLANE[p].reserve_fuel - PLANE[p].pilot_weight
+
+
+max_landing_payload = {}
+
+for p in PLANE:
+  for i in AIRPORT:
+    max_landing_payload[i,p] = WEIGHTLIMIT[i,p].max_landing_weight - PLANE[p].empty_weight - PLANE[p].reserve_fuel - PLANE[p].pilot_weight
+
+
+fuelconsumption = {}
+
+for p in PLANE:
+  for i, j in TRIP:
+    fuelconsumption[i,j,p] = math.ceil(travel_time[i,j,p] * PLANE[p].fuel * PLANE[p].speed * PLANE[p].contigence_ratio / 60.0);
+
+
+max_trip_payload = {}
+
+for p in PLANE:
+  for i, j in TRIP:
+    max_trip_payload[i,j,p] = min(max_takeoff_payload[i,p] + fuelconsumption[i,j,p], max_landing_payload[j,p])
+
+
+max_trip_fuel = {}
+
+for p in PLANE:
+  for i, j in TRIP:
+    max_trip_fuel[i,j,p] = PLANE[p].max_fuel - fuelconsumption[i,j,p] - PLANE[p].reserve_fuel
+
+
+earliest_departure_travel_timesteps = {}
+
+for p in PLANE:
+  for i, j in TRIP:
+    for r in REQUEST:
+      earliest_departure_travel_timesteps[i,j,p,r] = math.ceil((REQUEST[r].earliest_departure_time + 60 * TRIP[i,j].distance / PLANE[p].speed) / timedelta)
+
+
+earliest_departure_timesteps = {}
+
+for r in REQUEST:
+  earliest_departure_timesteps[r] = int(math.ceil((REQUEST[r].earliest_departure_time + 1440 * (REQUEST[r].earliest_departure_day - 1)) / timedelta))
+  
+
+latest_arrival_timesteps = {}
+
+for r in REQUEST:
+  latest_arrival_timesteps[r] = int(math.floor((REQUEST[r].latest_arrival_time + 1440 * (REQUEST[r].latest_arrival_day - 1)) / timedelta))
+
+direct_flight_timesteps = {}
+
+for p in PLANE:
+  for r in REQUEST:
+    if PLANE[p].plane_departure == REQUEST[r].request_departure:
+      direct_flight_timesteps[p,r] = 0
+    else:
+      direct_flight_timesteps[p,r] = turnover_travel_timesteps[PLANE[p].plane_departure,REQUEST[r].request_departure,p]
+
+    #print "direct_flight_timesteps plane ",p,", request ",r,": ",direct_flight_timesteps[p,r]
+
+max_refuel_flight_timesteps = {}
+
+for p in PLANE:
+  for r in REQUEST:
+    max_refuel_flight_timesteps[p,r] = 0
+    
+    for i in AIRPORT:
+      if (AIRPORT[i].fuel[PLANE[p].required_fueltype] == '1' and i != PLANE[p].plane_departure and i != REQUEST[r].request_departure):
+        aux = turnover_travel_timesteps[PLANE[p].plane_departure,i,p] + turnover_travel_timesteps[i,REQUEST[r].request_departure,p]
+        max_refuel_flight_timesteps[p,r] = max(max_refuel_flight_timesteps[p,r],aux)
+
+    #print "max_refuel_flight_timesteps plane ",p,", request ",r,": ",max_refuel_flight_timesteps[p,r]
+
+plane_min_timestep = {}
+
+for p in PLANE:
+  plane_min_timestep[p] = 99999
+  
+  for r in REQUEST:
+    if REQUEST[r].passengers <= PLANE[p].seats:
+      aux = earliest_departure_timesteps[r] - turnover_timesteps[REQUEST[r].request_departure,p] - max(direct_flight_timesteps[p,r], max_refuel_flight_timesteps[p,r])
+      plane_min_timestep[p] = int(min(plane_min_timestep[p],aux))
+
+  #print "plane ",p," min timestep: ",plane_min_timestep[p]
+
+plane_max_timestep = {}
+
+for p in PLANE:
+  plane_max_timestep[p] = 0
+  
+  for r in REQUEST:
+    if REQUEST[r].passengers <= PLANE[p].seats:
+      aux = latest_arrival_timesteps[r] + max(direct_flight_timesteps[p,r],max_refuel_flight_timesteps[p,r])
+      plane_max_timestep[p] = int(max(plane_max_timestep[p],aux))
+
+  #print "plane ",p," max timestep: ",plane_max_timestep[p]
+
+
+TRIP0 = {}
+
+for i,j in TRIP:
+  if i != j:
+    TRIP0[i,j] = TRIP[i,j]
+
+
+REQUEST_TRIP = {}
+
+for r in REQUEST:
+  REQUEST_TRIP[r] = {}
+
+  for i,j in TRIP:
+    if i != REQUEST[r].request_arrival and j != REQUEST[r].request_departure:
+      REQUEST_TRIP[r][i,j] = TRIP[i,j]
+
+
+REQUEST_TRIP0 = {}
+
+for r in REQUEST:
+  REQUEST_TRIP0[r] = {}
+
+  for i,j in TRIP0:
+    if i != REQUEST[r].request_arrival and j != REQUEST[r].request_departure:
+      REQUEST_TRIP0[r][i,j] = TRIP0[i,j]
+
+
+min_refuel_trip = {}
+
+for i in AIRPORT:
+  for p in PLANE:
+    min_refuel_trip[i,p] = 99999
+    for j in AIRPORT:
+      if (i,j) in TRIP:
+        if AIRPORT[j].fuel[PLANE[p].required_fueltype] == '1':
+          min_refuel_trip[i,p] = min(min_refuel_trip[i,p], fuelconsumption[i,j,p])
+
+
+plane_solution_arrival_time = {}
+plane_solution_arrival_timestep = {}
+
+for p,i,j,hh,mm in PLANE_SOLUTION:
+  plane_solution_arrival_time[p,i,j,hh,mm] = 60 * int(hh) + int(mm);
+  plane_solution_arrival_timestep[p,i,j,hh,mm] = math.ceil(plane_solution_arrival_time[p,i,j,hh,mm] / timedelta)
+
+
+request_solution_arrival_time = {}
+request_solution_arrival_timestep = {}
+
+for p,r,i,j,hh,mm in REQUEST_SOLUTION:
+  request_solution_arrival_time[p,r,i,j,hh,mm] = 60 * int(hh) + int(mm);
+  request_solution_arrival_timestep[p,r,i,j,hh,mm] = math.ceil(request_solution_arrival_time[p,r,i,j,hh,mm] / timedelta)
+  
+  
+PLANE_TIMESTEP = {}
+
+for p in PLANE:
+  PLANE_TIMESTEP[p] = {}
+  
+  for t in range(plane_min_timestep[p], plane_max_timestep[p] + 1):
+    PLANE_TIMESTEP[p][t] = 1
+    
+
+REQUEST_TIMESTEP = {}
+
+for r in REQUEST:
+  max_turnover_timesteps = 0
+  for p in PLANE:
+    max_turnover_timesteps = max(max_turnover_timesteps, turnover_timesteps[REQUEST[r].request_departure,p])
+  
+  REQUEST_TIMESTEP[r] = range(earliest_departure_timesteps[r] - max_turnover_timesteps, latest_arrival_timesteps[r] + 1)
+
+
+min_timestep = 99999
+max_timestep = 0
+
+for p in PLANE:
+  min_timestep = min(min_timestep, plane_min_timestep[p])
+  max_timestep = max(max_timestep, plane_max_timestep[p])
+  
+TIMESTEP = range(min_timestep, max_timestep + 1)
+
+
+TIMEFREEPLANESOLUTION = {}
+
+for p,i,j,hh,mm in PLANE_SOLUTION:
+  TIMEFREEPLANESOLUTION[p,i,j] = 1
+  
+
+TIMEFREEREQUESTSOLUTION = {}
+
+for p,r,i,j,hh,mm in REQUEST_SOLUTION:
+  TIMEFREEREQUESTSOLUTION[p,r,i,j] = 1
+  
+   
+
+multiple_arc_use = {}
+
+for p,i,j,hh,mm in PLANE_SOLUTION:
+  if (p,i,j) in multiple_arc_use:
+    multiple_arc_use[p,i,j] += 1
+  else:
+    multiple_arc_use[p,i,j] = 1
 
 
 # ----------------
 # MODEL GENERATION
 # ----------------
 
+model = cplex.Cplex()
 
 
-number_of_timesteps=20
 # VARIABLES
 
-#"""
-xDividers={}
-for i,j in Distance:
-    for r in Request:
-        for p in Airplane:
-            xDividers[i,j,r,p]=DIVIDERCOLLECTION(number_of_timesteps)
+x = {}
+number_of_variables = 0
 
-xDepDividers={}
-xArrDividers={}
-for r in Request:
-    for p in Airplane:
-        xArrDividers[r,p]=DIVIDERCOLLECTION(number_of_timesteps)
-        xDepDividers[r,p]=DIVIDERCOLLECTION(number_of_timesteps)
+for r in REQUEST:
+  for i,j in REQUEST_TRIP0[r]:
+    for p in PLANE:
+      x[i,j,r,p] = "x#" + i + "_" + j + "_" + r + "_" + p
+      #model.variables.add(obj = [travelcost[i,j,p]], names = [x[i,j,r,p]], lb = [0], ub = [1], types = ["B"])
+      model.variables.add(obj = [0.0001], names = [x[i,j,r,p]], lb = [0], ub = [1], types = ["B"])
+      number_of_variables += 1
 
-yDividers={}
-for i,j in Distance:
-    for p in Airplane:
-        yDividers[i,j,p]=DIVIDERCOLLECTION(number_of_timesteps)
+x_dep = {}
 
-yDepDividers={}
-yArrDividers={}
-for p in Airplane:
-    yDepDividers[p]=DIVIDERCOLLECTION(number_of_timesteps)
-    yArrDividers[p]=DIVIDERCOLLECTION(number_of_timesteps)
-    #for t in range(1,number_of_timesteps):
-    #    yDepDividers[p].addDivider([t],number_of_timesteps)
-    #    yArrDividers[p].addDivider([t],number_of_timesteps)
+for r in REQUEST:
+  for p in PLANE:
+    x_dep[r,p] = "x_dep#" + r + "_" + p
+    model.variables.add(names = [x_dep[r,p]], lb = [0], ub = [1], types = ["B"])
+    number_of_variables += 1
 
-zDividers={}
+x_arr = {}
 
-for i,j in Distance:
-    for p in Airplane:
-        zDividers[i,j,p]=DIVIDERCOLLECTION(number_of_timesteps)
+for r in REQUEST:
+  for p in PLANE:
+    x_arr[r,p] = "x_arr#" + r + "_" + p
+    model.variables.add(names = [x_arr[r,p]], lb = [0], ub = [1], types = ["B"])
+    number_of_variables += 1
+
+y = {}
+eta = {}
+
+for i,j in TRIP0:
+  for p in PLANE:
+    y[i,j,p] = "y#" + i + "_" + j + "_" + p
+    if strategy == '1':
+      model.variables.add(obj = [travelcost[i,j,p]], names = [y[i,j,p]], lb = [0], types = ["C"])
+      number_of_variables += 1
+      
+      for k in range(1,3):
+        eta[i,j,p,k] = "eta#" + i + "_" + j + "_" + p + "_" + str(k)
+        model.variables.add(names = [eta[i,j,p,k]], lb = [0], ub = [1], types = ["B"])
+        number_of_variables += 1
+    else:
+      model.variables.add(obj = [travelcost[i,j,p]], names = [y[i,j,p]], lb = [0], types = ["I"])
+      number_of_variables += 1
+
+f = {}
+
+for i,j in TRIP0:
+  for p in PLANE:
+    f[i,j,p] = "f#" + i + "_" + j + "_" + p
+    model.variables.add(names = [f[i,j,p]], lb = [0], types = ["C"])
+    number_of_variables += 1
+
+f_dep = {}
+
+for p in PLANE:
+  f_dep[p] = "f_dep#" + p
+  model.variables.add(names = [f_dep[p]], lb = [PLANE[p].departure_min_fuel], ub = [PLANE[p].departure_max_fuel], types = ["C"])
+  number_of_variables += 1
+
+f_arr = {}
+
+for p in PLANE:
+  f_arr[p] = "f_arr#" + p
+  model.variables.add(names = [f_arr[p]], lb = [PLANE[p].arrival_min_fuel], ub = [PLANE[p].arrival_max_fuel], types = ["C"])
+  number_of_variables += 1
+
+w = {}
+
+for i,j in TRIP0:
+  for p in PLANE:
+    w[i,j,p] = "w#" + i + "_" + j + "_" + p
+    model.variables.add(names = [w[i,j,p]], lb = [0], types = ["C"])
+    number_of_variables += 1
+
+print "number of variables: ",number_of_variables
 
 
-zDepDividers={}
-zArrDividers={}
-for p in Airplane:
-    zDepDividers[p]=DIVIDERCOLLECTION(number_of_timesteps)
-    zArrDividers[p]=DIVIDERCOLLECTION(number_of_timesteps)
-#"""
+# OBJECTICE 
 
-#main loop for creating sequence of loops
-mipSolved=0
+model.objective.set_sense(model.objective.sense.minimize)
 
-while(mipSolved==0):
-    model = cplex.Cplex()
-    x = {}
-    for i,j in Distance:
-        for r in Request:
-            for p in Airplane:
-                for ID in xDividers[i,j,r,p].ids:
-                    x[i,j,r,p,ID] = "x#" + i + "_" + j + "_" + r + "_" + p + "_"+ID
-                    model.variables.add(obj = [0.01 * Distance[i,j]], names = [x[i,j,r,p,ID]], lb = [0], ub = [1], types = ["B"])
-    
-    x_dep = {}
-    
-    for r in Request:
-        for p in Airplane:
-            for ID in xDepDividers[r,p].ids:
-                x_dep[r,p,ID] = "x_dep#" + r + "_" + p + "_" + ID
-                model.variables.add(names = [x_dep[r,p,ID]], lb = [0], ub = [1], types = ["B"])
-    
-    x_arr = {}
-    
-    for r in Request:
-        for p in Airplane:
-            for ID in xArrDividers[r,p].ids:
-                x_arr[r,p,ID] = "x_arr#" + r + "_" + p + "_" + ID
-                model.variables.add(names = [x_arr[r,p,ID]], lb = [0], ub = [1], types = ["B"])
+
+# CONSTRAINTS
+
+number_of_constraints = 0
+number_of_nonzeros = 0
+
+# auxiliary constraints for y-eta
+
+if strategy == '1':
+  for i,j in TRIP0:
+    for p in PLANE:
+      thevars = [y[i,j,p]]
+      thecoefs = [1.0]
+      number_of_nonzeros += 1
+      
+      for k in range(1,3):
+        thevars.append(eta[i,j,p,k])
+        thecoefs.append(-k)
+        number_of_nonzeros += 1
         
-    y = {}
-    for i,j in Distance:
-        for p in Airplane:
-            for ID in yDividers[i,j,p].ids:
-                y[i,j,p,ID] = "y#" + i + "_" + j + "_" + p + "_" + ID
-                model.variables.add(obj = [Travelcost[i,j,p]], names = [y[i,j,p,ID]], lb = [0], types = ["I"])
-    
-    y_dep = {}
-    
-    for p in Airplane:
-        for ID in yDepDividers[p].ids:
-            y_dep[p,ID] = "y_dep#" + p  + "_" + ID
-            model.variables.add(names = [y_dep[p,ID]], lb = [0.0], ub = [1.0], types = ["B"])
-    
-    y_arr = {}
-    
-    for p in Airplane:
-        for ID in yArrDividers[p].ids:
-            y_arr[p,ID] = "y_arr#" + p  + "_" + ID
-            model.variables.add(names = [y_arr[p,ID]], lb = [0.0], ub = [1.0], types = ["B"])
-    
-    z = {}
-    
-    for i,j in Distance:
-        for p in Airplane:
-            for ID in zDividers[i,j,p].ids:
-                z[i,j,p,ID] = "z#" + i + "_" + j + "_" + p  + "_" + ID
-                model.variables.add(names = [z[i,j,p,ID]], lb = [0], ub = [Airplane[p].max_fuel], types = ["C"])
-    
-    z_dep = {}
-    
-    for p in Airplane:
-        for ID in zDepDividers[p].ids:
-            z_dep[p,ID] = "z_dep#" + p  + "_" + ID
-            model.variables.add(names = [z_dep[p,ID]], lb = [Airplane[p].departure_min_fuel], ub = [Airplane[p].departure_max_fuel], types = ["C"])
+      model.linear_constraints.add(names = ["y_eta_coupling_" + i + "_" + j + "_" + p], lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [0.0])
+      number_of_constraints += 1
+      
+      thevars = []
+      thecoefs = []
+      
+      for k in range(1,3):
+        thevars.append(eta[i,j,p,k])
+        thecoefs.append(1.0)
+        number_of_nonzeros += 1
+        
+      model.linear_constraints.add(names = ["eta_selection_" + i + "_" + j + "_" + p], lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [1.0])
+      number_of_constraints += 1
+      
+      
+# each request must depart
 
-    z_arr = {}
+for r in REQUEST:
+  thevars = []
+  thecoefs = []
+  for p in PLANE:
+    thevars.append(x_dep[r,p])
+    thecoefs.append(1.0)
+    number_of_nonzeros += 1
     
-    for p in Airplane:
-        for ID in zArrDividers[p].ids:
-            z_arr[p,ID] = "z_arr#" + p  + "_" + ID
-            model.variables.add(names = [z_arr[p,ID]], lb = [Airplane[p].arrival_min_fuel], ub = [Airplane[p].arrival_max_fuel], types = ["C"])
-    """
-    w = {}
-    
-    for i,j in Distance:
-        for p in Airplane:
-            w[i,j,p] = "w#" + i + "_" + j + "_" + p
-            model.variables.add(names = [w[i,j,p]], lb = [0], types = ["C"])
-    """
-    # CONSTRAINTS
-    #TODO: Change constraints so that they are defined for each time variable,
-    # to avoid unneccessary constraints track which constraints have been added and only add new ones
+  model.linear_constraints.add(names = ["request_one_dep_" + r], lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [1.0])
+  number_of_constraints += 1
 
-    
-    #each plane must depart and arrive
-    
-    for p in Airplane:
-        thevars=[y_dep[p,ID] for ID in yDepDividers[p].ids]
-        thecoefs=[1.0 for ID in yDepDividers[p].ids]
-        model.linear_constraints.add(names=[p+' departure'],lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [1.0])
-        thevars=[y_arr[p,ID] for ID in yArrDividers[p].ids]
-        thecoefs=[1.0 for ID in yArrDividers[p].ids]
-        model.linear_constraints.add(names=[p+' arrival'],lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [1.0])
-    
-    #airplane flow
-    #TODO: Check if restriction to in Distance is neccessary
-    for i,j in Distance:
-        for p in Airplane:
-            thevars=[y[i,j,p,ID] for ID,intervalIter in yDividers[i,j,p].ids.iteritems() if not(doTheyIntersect(intervalIter,[Traveltime[i,j,p],number_of_timesteps+1]))]
-            if thevars!=[]:
-                print(thevars)
-                thecoefs=[1.0]*len(thevars)
-                #model.linear_constraints.add(names=[i+'_'+j+'_'+p+ ' not reachable'],lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [0.0])
-    #model.variables.set_upper_bounds('y_dep#10_01',0.0)
-    for j in Airport:
-        for p in Airplane:
-            constrCodes=[]
-            for t in xrange(number_of_timesteps):
-                thevars=[]
-                thecoefs=[]
-                intervals=[]
-                for i in Airport:
-                    if i!=j and (i,j) in Distance:
-                        ID1=yDividers[i,j,p].findId(t)
-                        thevars += [y[i,j,p,ID1]]
-                        thecoefs += [1.0]
-                        intervals = joinIntervalLists(intervals,yDividers[i,j,p].ids[ID1])
 
-                rhs_value = 0.0
-                
-                if (j == Airplane[p].origin):
-                    ID1=yDepDividers[p].findId(t)
-                    #thevars+=[y_dep[p,ID] for ID,intervalIter in yDepDividers[p].ids.iteritems() if doTheyIntersect(intervals2,intervalIter)]
-                    thevars.append(y_dep[p,ID1])
-                    #thecoefs+=[1.0 for ID,intervalIter in yDepDividers[p].ids.iteritems() if doTheyIntersect(intervals2,intervalIter)]
-                    thecoefs+=[1.0]
-                    intervals = joinIntervalLists(intervals,yDepDividers[p].ids[ID1])
-                """
-                if (j == Airplane[p].origin):
-                    for ID1,intervalIter in yDepDividers[p].ids.iteritems():
-                        if doTheyIntersect(intervalIter,intervals):
-                            #thevars+=[y_dep[p,ID] for ID,intervalIter in yDepDividers[p].ids.iteritems() if doTheyIntersect(intervals2,intervalIter)]
-                            thevars.append(y_dep[p,ID1])
-                            #thecoefs+=[1.0 for ID,intervalIter in yDepDividers[p].ids.iteritems() if doTheyIntersect(intervals2,intervalIter)]
-                            thecoefs+=[1.0]
-                            intervals = joinIntervalLists(intervals,yDepDividers[p].ids[ID1])
-                
-                """
-                for k in Airport:
-                    if k!=j and (j,k) in Distance:
-                        for ID ,intervalIter in yDividers[j,k,p].ids.iteritems():
-                            if doTheyIntersect(shiftList(intervals,Traveltime[j,k,p]),intervalIter):
-                                thevars += [y[j,k,p,ID]]
-                                thecoefs += [-1.0]
-                                intervals2=joinIntervalLists(intervals,intervalIter)
-                """
-                thevars+= [y[j,k,p,ID] for k in Airport  if k!=j and (j,k) in Distance for ID ,intervalIter in yDividers[j,k,p].ids.iteritems()
-                             if doTheyIntersect(shiftList(intervals,Traveltime[j,k,p]),intervalIter)]
+# each request must arrive
 
-                thecoefs += [-1.0  for k in Airport  if k!=j and (j,k) in Distance for ID ,intervalIter in yDividers[j,k,p].ids.iteritems()
-                             if doTheyIntersect(shiftList(intervals,Traveltime[j,k,p]),intervalIter)]
-                
-                if (j == Airplane[p].destination):
-                    #thevars.append(y_arr[p,yArrDividers[p].findId(t)])
-                    #thecoefs.append(-1.0)
-                    thevars+=[y_arr[p,ID] for ID,intervalIter in yArrDividers[p].ids.iteritems() if doTheyIntersect(intervals,intervalIter)]
-                    thecoefs+=[-1.0 for ID,intervalIter in yArrDividers[p].ids.iteritems() if doTheyIntersect(intervals,intervalIter)]
-                constrCode=''
-                for name in thevars:
-                    constrCode+=name
-                if not (constrCode in constrCodes):
-                    #print(j)
-                    #print(constrCode)
-                    if  j+'_'+p+'_'+str(t)+ ' flow'=='ABU_10_0 flow' or j+'_'+p+'_'+str(t)+ ' flow'=='MOM_10_0 flow':
-                        print(thevars)
-                    model.linear_constraints.add(names=[ j+'_'+p+'_'+str(t)+ ' flow'],lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [rhs_value])
-                    constrCodes.append(constrCode)
-                
-    #"""
-    #"""
-    for p in Airplane:
-        if (Airplane[p].origin == Airplane[p].destination):
-            i = Airplane[p].origin
+for r in REQUEST:
+  thevars = []
+  thecoefs = []
+  for p in PLANE:
+    thevars.append(x_arr[r,p])
+    thecoefs.append(1.0)
+    number_of_nonzeros += 1
+    
+  model.linear_constraints.add(names = ["request_one_arr_" + r], lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [1.0])
+  number_of_constraints += 1
+  
+
+# request flow
+
+for r in REQUEST:
+  for p in PLANE:
+    for j in AIRPORT:
+      thevars = []
+      thecoefs = []
+
+      for i in AIRPORT:
+        if (i,j) in REQUEST_TRIP0[r]:
+          thevars.append(x[i,j,r,p])
+          thecoefs.append(1.0)
+          number_of_nonzeros += 1
+      
+      if j == REQUEST[r].request_departure:
+        thevars.append(x_dep[r,p])
+        thecoefs.append(1.0)
+        number_of_nonzeros += 1
+        
+      for k in AIRPORT:
+        if (j,k) in REQUEST_TRIP0[r]:
+          thevars.append(x[j,k,r,p])
+          thecoefs.append(-1.0)
+          number_of_nonzeros += 1
+          
+      if j == REQUEST[r].request_arrival:
+        thevars.append(x_arr[r,p])
+        thecoefs.append(-1.0)
+        number_of_nonzeros += 1
+        
+      model.linear_constraints.add(names = ["request_flow_" + r + "_" + p + "_" + j], lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [0.0])
+      number_of_constraints += 1
+          
+
+# airplane flow
+
+for p in PLANE:
+  for j in AIRPORT:
+    #print p,i
+    rhs_value = 0.0
+    thevars = []
+    thecoefs = []
+        
+    for i in AIRPORT:
+      if (i,j) in TRIP0:
+        thevars.append(y[i,j,p])
+        thecoefs.append(1.0)
+        number_of_nonzeros += 1
+        
+    if j == PLANE[p].plane_departure:
+      rhs_value += -1.0
+      
+    for k in AIRPORT:
+      if (j,k) in TRIP0:
+        thevars.append(y[j,k,p])
+        thecoefs.append(-1.0)
+        number_of_nonzeros += 1
+    
+    if j == PLANE[p].plane_arrival:
+      rhs_value += 1.0
+    
+    model.linear_constraints.add(names = ["plane_flow_" + p + "_" + j], lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [rhs_value])
+    number_of_constraints += 1
+
+              
+# seat limit
+
+for i,j in TRIP0:
+  for p in PLANE:
+    #print i,j,p
+    thevars = [y[i,j,p]]
+    thecoefs = [-PLANE[p].seats]
+    number_of_nonzeros += 1
+    
+    for r in REQUEST:
+      if (i,j) in REQUEST_TRIP0[r]:
+        thevars.append(x[i,j,r,p])
+        thecoefs.append(REQUEST[r].passengers)
+        number_of_nonzeros += 1
+      
+    model.linear_constraints.add(names = ["seatlimit_" + i + "_" + j + "_" + p], lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [0.0])
+    number_of_constraints += 1
+
+
+# intermediate stops for requests
+
+for r in REQUEST:
+  thevars = []
+  thecoefs = []
+  #print r
+    
+  for i,j in REQUEST_TRIP0[r]:
+    for p in PLANE:
+      thevars.append(x[i,j,r,p])
+      thecoefs.append(1.0)
+      number_of_nonzeros += 1
             
-            thevars = [y[i,j,p,ID] for j in Airport if i!=j for ID in yDividers[i,j,p].ids]
-            thecoefs = [1.0]*len(thevars)
+  model.linear_constraints.add(names = ["intermediatestops_" + r], lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [REQUEST[r].max_stops + 1])
+  number_of_constraints += 1
+
+
+# maximum detour for passengers (compared to direct flight)
+
+for r in REQUEST:
+  thevars = []
+  thecoefs = []
+  
+  for i,j in REQUEST_TRIP0[r]:
+    for p in PLANE:
+      thevars.append(x[i,j,r,p])
+      thecoefs.append(TRIP0[i,j].distance)
+      number_of_nonzeros += 1
+      
+  model.linear_constraints.add(names = ["maxdetour_" + r], lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [(1 + REQUEST[r].max_detour) * TRIP0[REQUEST[r].request_departure,REQUEST[r].request_arrival].distance])
+  number_of_constraints += 1
+  
+
+# fueling constraints
+
+for i,j in TRIP0:
+  for p in PLANE:
+    #print i,j,p
+    thevars = [f[i,j,p],y[i,j,p]]
+    thecoefs = [1.0,-max_trip_fuel[i,j,p]]
+    number_of_nonzeros += 2
+    
+    model.linear_constraints.add(names = ["noflight_nofuel_" + i + "_" + j + "_" + p], lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [0.0])
+    number_of_constraints += 1
+
+
+for j in AIRPORT:
+  for p in PLANE:
+    #print j,p
+    thevars = []
+    thecoefs = []
             
-            model.linear_constraints.add(names=[p+' must depart'],lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["G"], rhs = [1.0])
-    #"""
-    # each request must depart and arrive
-    #"""
-    for r in Request:
-        thevars = [x_dep[r,p,ID] for p in Airplane for ID in xDepDividers[r,p].ids]
-        thecoefs = [1.0 for p in Airplane for ID in xDepDividers[r,p].ids]
-        model.linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [1.0])
-        thevars = [x_arr[r,p,ID] for p in Airplane for ID in xArrDividers[r,p].ids]
-        thecoefs = [1.0 for p in Airplane for ID in xArrDividers[r,p].ids]
-        model.linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [1.0])
-    
-    
-    #TODO: Check if restriction to in Distance has to be added
-    # request flow departure
-    
-    """
-    for r in Request:
-        for p in Airplane:
-            constrCodes=[]
-            for t in xrange(number_of_timesteps):
-                thevars=[]
-                thecoefs=[]
-                intervals=[]
-                ori=Request[r].origin
-                for j in Airport:
-                    if (j!= ori):
-                        ID1=xDividers[ori,j,r,p].findId(t)
-                        thevars += [x[ori,j,r,p,ID1]]
-                        thecoefs += [1.0]
-                        intervals = joinIntervalLists(intervals,xDividers[ori,j,r,p].ids[ID1])
-                thevars += [x_dep[r,p,ID] for ID,intervalIter in xDepDividers[r,p].ids.iteritems() if doTheyIntersect(intervals,intervalIter)]
-                thecoefs += [-1.0 for ID,intervalIter in xDepDividers[r,p].ids.iteritems() if doTheyIntersect(intervals,intervalIter)]
-                
+    for i in AIRPORT:
+      if (i,j) in TRIP0:
+        thevars.append(f[i,j,p])
+        thecoefs.append(1.0)
+        number_of_nonzeros += 1
+            
+    if j == PLANE[p].plane_departure:
+      thevars.append(f_dep[p])
+      thecoefs.append(1.0)
+      number_of_nonzeros += 1
+            
+    for k in AIRPORT:
+      if (j,k) in TRIP0:
+        thevars.append(f[j,k,p])
+        thecoefs.append(-1.0)
+        number_of_nonzeros += 1
+        
+        thevars.append(y[j,k,p])
+        thecoefs.append(-fuelconsumption[j,k,p])
+        number_of_nonzeros += 1
+            
+    if j == PLANE[p].plane_arrival:
+      thevars.append(f_arr[p])
+      thecoefs.append(-1.0)
+      number_of_nonzeros += 1
+            
+    if AIRPORT[j].fuel[PLANE[p].required_fueltype] == '0':
+      model.linear_constraints.add(names = ["fuelconsumption_" + j + "_" + p], lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [0.0])
+      number_of_constraints += 1
+    else:
+      model.linear_constraints.add(names = ["refueling_" + j + "_" + p], lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [0.0])
+      number_of_constraints += 1
 
-                
-                constrCode=''
-                for name in thevars:
-                    constrCode+=name
-                if not (constrCode in constrCodes):
-                    model.linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [0.0])
-                    constrCodes.append(constrCode)
-    
-    # request flow arrival
-    
-    for r in Request:
-        for p in Airplane:
-            constrCodes=[]
-            for t in xrange(number_of_timesteps):
-                thevars=[]
-                thecoefs=[]
-                intervals=[]
-                desti=Request[r].destination
-                for i in Airport:
-                    if (i!= desti):
-                        ID1=xDividers[i,desti,r,p].findId(t)
-                        thevars += [x[i,desti,r,p,ID1]]
-                        thecoefs += [1.0]
-                        intervals = joinIntervalLists(intervals,xDividers[i,desti,r,p].ids[ID1])
-                thevars += [x_arr[r,p,ID] for ID,intervalIter in xArrDividers[r,p].ids.iteritems() if doTheyIntersect(intervals,intervalIter)]
-                thecoefs += [-1.0 for ID,intervalIter in xArrDividers[r,p].ids.iteritems() if doTheyIntersect(intervals,intervalIter)]
-                
-                #desti=Request[r].destination
-                #thevars = [x_arr[r,p,xArrDividers[r,p].findId(t)]]
-                #thecoefs = [-1.0]
-                #thevars += [x[j,desti,r,p,ID]
-                #                for j in Airport if j != desti for ID,intervals in xDividers[j,desti,r,p].ids.iteritems() 
-                #                if doTheyIntersect(shiftList(xArrDividers[r,p].ids[xArrDividers[r,p].findId(t)],Traveltime[j,desti,p]),intervals)]
-                #thecoefs += [1.0 for j in Airport if j != desti for ID,intervals in xDividers[j,desti,r,p].ids.iteritems() 
-                #                if doTheyIntersect(shiftList(xArrDividers[r,p].ids[xArrDividers[r,p].findId(t)],Traveltime[j,desti,p]),intervals)]
-                
-                
-                constrCode=''
-                for name in thevars:
-                    constrCode+=name
-                if not (constrCode in constrCodes):
-                    model.linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [0.0])
-                    constrCodes.append(constrCode)
-    
-    
-    # request flow (other than departure and arrival)
-    """
-    #"""
-    for r in Request:
-        for p in Airplane:
-            for j in Airport:
-                constrCodes=[]
-                #if (j != Request[r].origin and j != Request[r].destination):
-                if 1:
-                    for t in xrange(number_of_timesteps):
-                    #for t in xrange(Request[r].earliest_departure,Request[r].latest_arrival):
-                        thevars=[]
-                        thecoefs=[]
-                        intervals=[]
-                        for i in Airport:
-                            if (j!= i):
-                                ID1=xDividers[i,j,r,p].findId(t)
-                                thevars += [x[i,j,r,p,ID1]]
-                                thecoefs += [1.0]
-                                intervals = joinIntervalLists(intervals,xDividers[i,j,r,p].ids[ID1])
-                        #thevars = [x[j,i,r,p,xDividers[j,i,r,p].findId(t)]
-                        #            for j in Airport if j != i]
-                        #thecoefs = [1.0 for j in Airport if j != i];
-                        if (j == Request[r].origin):
-                            ID1=xDepDividers[r,p].findId(t)
-                            thevars.append(x_dep[r,p,ID1])
-                            thecoefs+=[1.0]
-                            intervals = joinIntervalLists(intervals,xDepDividers[r,p].ids[ID1])
-                        thevars += [x[j,k,r,p,ID] 
-                                    for k in Airport if j != k for ID,intervalsiter in xDividers[j,k,r,p].ids.iteritems()
-                                    if doTheyIntersect(shiftList(intervals,Traveltime[j,k,p]),intervalsiter)]
-                        
-                        thecoefs += [-1.0 for k in Airport if j != k for ID,intervalsiter in xDividers[j,k,r,p].ids.iteritems()
-                                    if doTheyIntersect(shiftList(intervals,Traveltime[j,k,p]),intervalsiter)];
-                               
-                        if (j == Request[r].destination):
 
-                            thevars+=[x_arr[r,p,ID] for ID,intervalIter in xArrDividers[r,p].ids.iteritems() if doTheyIntersect(intervals,intervalIter)]
-                            thecoefs+=[-1.0 for ID,intervalIter in xArrDividers[r,p].ids.iteritems() if doTheyIntersect(intervals,intervalIter)]
-                        
-                        constrCode=''
-                        for name in thevars:
-                            constrCode+=name
-                        if not (constrCode in constrCodes):
-                            model.linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [0.0])
-                            constrCodes.append(constrCode)
-    
-    
-    # airplane departure/arrival in case origin equals destination
-    #TODO: Make sure this is unneccessary in the time expanded case
-    
-                    
-    # seat limit
-    
-    for i,j in Distance:
-        for p in Airplane:
-            constrCodes=[]
-            for t in range(number_of_timesteps):
-                #print i,j,p
-                thevars=[]
-                thecoefs=[]
-                intervals=[]
-                for r in Request:
-                    ID1=xDividers[i,j,r,p].findId(t)
-                    thevars += [x[i,j,r,p,ID1]]
-                    thecoefs += [Request[r].passengers]
-                    intervals = joinIntervalLists(intervals,xDividers[i,j,r,p].ids[ID1])
-                
-                #thevars += [y[i,j,p, yDividers[i,j,p].findId(t)]]
-                #thecoefs += [-Airplane[p].seats]
+# weight limit (=max fuel)
 
-                
-                thevars += [y[i,j,p,ID] for ID,intervalIter in yDividers[i,j,p].ids.iteritems() 
-                             if doTheyIntersect(intervals,intervalIter)]
-                thecoefs += [-Airplane[p].seats for ID,intervalIter in yDividers[i,j,p].ids.iteritems() 
-                             if doTheyIntersect(intervals,intervalIter)]
-                #thevars += [x[i,j,r,p,xDividers[i,j,r,p].findId(t)] for r in Request]
-                #thecoefs += [Request[r].passengers for r in Request]
-                
-                constrCode=''
-                for name in thevars:
-                    constrCode+=name
-                if not (constrCode in constrCodes):
-                    model.linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [0.0])
-                    constrCodes.append(constrCode)
-    
-    
-    # intermediate stops for requests
-    
-    for r in Request:
-        thevars = [x[i,j,r,p,ID] for i,j in Distance for p in Airplane for ID in xDividers[i,j,r,p].ids]
-        thecoefs = [1.0 for i,j in Distance for p in Airplane for ID in xDividers[i,j,r,p].ids ]
-        model.linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [max_stops + 1])
-    
-    #TODO: Check fi the the max detour length is included
-    #"""
-    # fueling constraints
-    """
-    for i,j in Distance:
-        for p in Airplane:
-            constrCodes=[]
-            for t in xrange(number_of_timesteps):
-                #print i,j,p
-                thevars = [z[i,j,p,zDividers[i,j,p].findId(t)],y[i,j,p,yDividers[i,j,p].findId(t)]]
-                thecoefs = [1.0,Fuelconsumption[i,j,p] + Airplane[p].reserve_fuel - Airplane[p].max_fuel]
-                
-                constrCode=''
-                for name in thevars:
-                    constrCode+=name
-                if not (constrCode in constrCodes):
-                    model.linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [0.0])
-                    constrCodes.append(constrCode)
-    
-    for j in Airport:
-        for p in Airplane:
-            constrCodes=[]
-            for t in xrange(number_of_timesteps):
-                #print j,p
-                thevars=[]
-                thecoefs=[]
-                intervals=[]
-                for i in Airport:
-                    if (j!= i):
-                        ID1=zDividers[i,j,p].findId(t)
-                        thevars += [z[i,j,p,ID1]]
-                        thecoefs += [1.0]
-                        intervals = joinIntervalLists(intervals,zDividers[i,j,p].ids[ID1])
-                #thevars = [z[i,j,p,zDividers[i,j,p].findId(t)] for i in Airport if (i,j) in Distance]
-                #thecoefs = [1.0 for i in Airport if (i,j) in Distance]
-                    
-                    
-                if j == Airplane[p].origin:
-                    thevars.append(z_dep[p,zDepDividers[p].findId(t)])
-                    #thevars.append(z_dep[p])
-                    thecoefs.append(1.0)
-                thevars += [z[j,k,p,ID] for k in Airport if (j,k) in Distance for ID,intervalsiter in zDividers[j,k,p].ids.iteritems() 
-                                if doTheyIntersect(shiftList(intervals,Traveltime[j,k,p]),intervalsiter) ]    
-                thecoefs += [-1.0 for k in Airport if (j,k) in Distance for ID,intervalsiter in zDividers[j,k,p].ids.iteritems() 
-                                if doTheyIntersect(shiftList(intervals,Traveltime[j,k,p]),intervalsiter)]
-                thevars += [y[j,k,p,ID] for k in Airport  if k!=j and (j,k) in Distance for ID ,intervalIter in yDividers[j,k,p].ids.iteritems()
-                             if doTheyIntersect(shiftList(intervals,Traveltime[j,k,p]),intervalIter)]    
-                thecoefs += [-Fuelconsumption[j,k,p] for k in Airport  if k!=j and (j,k) in Distance for ID ,intervalIter in yDividers[j,k,p].ids.iteritems()
-                             if doTheyIntersect(shiftList(intervals,Traveltime[j,k,p]),intervalIter)]
-                
-                #for k in Airport:
-                #    if (j,k) in Distance:
-                #        thevars.append(z[j,k,p])
-                #        thecoefs.append(-1.0)
-                #        thevars.append(y[j,k,p])
-                #        thecoefs.append(-Fuelconsumption[j,k,p])
-                
-                
-                
-                if j == Airplane[p].destination:
-                    thevars.append(z_arr[p,zArrDividers[p].findId(t)])
-                    thecoefs.append(-1.0)
-                
-                
-                constrCode=''
-                for name in thevars:
-                    constrCode+=name
-                if not (constrCode in constrCodes):  
-                    constrCodes.append(constrCode)
-                    if Airport[j].fuel[str(Airplane[p].required_fueltype)] == '0':
-                        model.linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [0.0])
-                    else:
-                        model.linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [0.0])
-                    
-    
-    # weight limit (=max fuel)
+for i,j in TRIP0:
+  for p in PLANE:
+    #print i,j,p
+    thevars = [w[i,j,p]]
+    thecoefs = [1.0]
+    number_of_nonzeros += 1
 
-    for i,j in Distance:
-        for p in Airplane:
-            constrCodes=[]
-            for t in xrange(number_of_timesteps):
-                #thevars = [x[i,j,r,p,xDividers[i,j,r,p].findId(t)] for r in Request if t >= Request[r].earliest_departure and t <=Request[r].latest_arrival]
-                #thecoefs = [Request[r].weight for r in Request if t >= Request[r].earliest_departure and t <=Request[r].latest_arrival]
-                thevars = [x[i,j,r,p,xDividers[i,j,r,p].findId(t)] for r in Request]
-                thecoefs = [Request[r].weight for r in Request ]
-                
-                
-                thevars.append(z[i,j,p,zDividers[i,j,p].findId(t)])
-                thecoefs.append(1.0)
-                thevars += [y[i,j,p,yDividers[i,j,p].findId(t)]]
-                thecoefs.append(-min(Weightlimit[i,p].max_takeoff_weight - Airplane[p].reserve_fuel - Airplane[p].empty_weight + Fuelconsumption[i,j,p], Weightlimit[i,p].max_landing_weight - Airplane[p].reserve_fuel - Airplane[p].empty_weight))
-                
-                
-                constrCode=''
-                for name in thevars:
-                    constrCode+=name
-                if not (constrCode in constrCodes):  
-                    constrCodes.append(constrCode)
-                    model.linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [0.0])
-                
-    """
-    # minimum number of fuelstops
-    
-    # objective function 
-    
-    model.objective.set_sense(model.objective.sense.minimize)
-    
-    
-    # output model
-    
-    model.write("model.lp")
-    
-    
-    # set callbacks
-    
-    #incumbent_cb = model.register_callback(CheckSolutuionCallback)
-    #lazyconstraint_cb = model.register_callback(SubtourEliminationCallback)
-    
-    #incumbent_cb = model.register_callback(CheckSolutuionMIPCallback)
-    #incumbent_cb.number_of_calls = 0
-    
-    
-    # set parameters
-    
-    model.parameters.mip.strategy.heuristicfreq.set(-1)
-    model.parameters.emphasis.mip.set(3) 
-     
-    # solve model
-           
-    try:
-        model.solve()
-        mipSolved=1
-    except CplexSolverError, exc:
-        print "** Exception: ",exc
-    #TODO: 
-    #Use solution to create mips for checking existence of timefree solution
-        #1: Check if y-variables can be reconstructed.
-         #If not: Adjust them and continue
-        #2: Check if x-variables can be reconstructed
-         #If not: Adjust them and continue
-        #3: Check if f-variables can be reconstructed
-         #If not: Adjust them and continue
-        #4: Check if x-variables and f-variables can be reconstructed at the same time
-        #If not: Adjust them and continue
-    #If timefree solution exists mipSolve=1
-    #else: add at least one Divider that changes number of variables
+    for r in REQUEST:
+      if (i,j) in REQUEST_TRIP0[r]:
+        thevars.append(x[i,j,r,p])
+        thecoefs.append(-REQUEST[r].weight)
+        number_of_nonzeros += 1
 
-#model.write("model.sol")
+    thevars.append(f[i,j,p])
+    thecoefs.append(-1.0)
+    number_of_nonzeros += 1
+        
+    model.linear_constraints.add(names = ["computeweight_" + i + "_" + j + "_" + p], lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [0.0])
+    number_of_constraints += 1
+
+
+for i,j in TRIP0:
+  for p in PLANE:
+    #print i,j,p
+    thevars = [w[i,j,p],y[i,j,p]]
+    thecoefs = [1.0,-max_trip_payload[i,j,p]]
+    number_of_nonzeros += 2
+
+    model.linear_constraints.add(names = ["weightlimit_" + i + "_" + j + "_" + p], lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [0.0])
+    number_of_constraints += 1
+
+
+# minimum number of fuelstops
+
+for p in PLANE:
+  if PLANE[p].departure_max_fuel - fuelconsumption[PLANE[p].plane_departure,PLANE[p].plane_arrival,p] < PLANE[p].arrival_min_fuel:
+    #print p
+    thevars = []
+    thecoefs = []
+
+    for i,j in TRIP0:
+      if AIRPORT[j].fuel[PLANE[p].required_fueltype] == '1':
+        thevars.append(y[i,j,p])
+        thecoefs.append(1.0)
+        number_of_nonzeros += 1
+        
+    model.linear_constraints.add(names = ["minfuelstops_in_" + p], lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["G"], rhs = [1.0])
+    number_of_constraints += 1
+
+for p in PLANE:    
+  if PLANE[p].departure_max_fuel - fuelconsumption[PLANE[p].plane_departure,PLANE[p].plane_arrival,p] < PLANE[p].arrival_min_fuel:
+    #print p
+    thevars = []
+    thecoefs = []
+
+    for i,j in TRIP0:
+      if AIRPORT[i].fuel[PLANE[p].required_fueltype] == '1':
+        thevars.append(y[i,j,p])
+        thecoefs.append(1.0)
+        number_of_nonzeros += 1
+        
+    model.linear_constraints.add(names = ["minfuelstops_out_" + p], lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["G"], rhs = [1.0])
+    number_of_constraints += 1
+   
+
+# maximum number of arrivals/departures per airport
+
+for i in AIRPORT:
+  anyfuel = 0
+  for ft in AIRPORT[i].fuel:
+    if AIRPORT[i].fuel[ft] == '1':
+      anyfuel += 1
+      
+  if anyfuel == 0:
+    thevars = []
+    thecoefs = []
+  
+    for j in AIRPORT:
+      if (i,j) in TRIP0:
+        for p in PLANE:
+          thevars.append(y[i,j,p])
+          thecoefs.append(1.0)
+          number_of_nonzeros += 1
+
+    rhs_value = 0
+    
+    for r in REQUEST:
+      if REQUEST[r].request_departure == i or REQUEST[r].request_arrival == i:
+        rhs_value += 1
+    
+    for p in PLANE:
+      if PLANE[p].plane_departure == i:
+        rhs_value += 1
+    print(rhs_value)    
+    model.linear_constraints.add(names = ["maxpickup_out_" + i], lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [rhs_value])
+    number_of_constraints += 1
+
+for j in AIRPORT:
+  anyfuel = 0
+  for ft in AIRPORT[j].fuel:
+    if AIRPORT[j].fuel[ft] == '1':
+      anyfuel += 1
+      
+  if anyfuel == 0:
+    thevars = []
+    thecoefs = []
+  
+    for i in AIRPORT:
+      if (i,j) in TRIP0:
+        for p in PLANE:
+          thevars.append(y[i,j,p])
+          thecoefs.append(1.0)
+          number_of_nonzeros += 1
+
+    rhs_value = 0
+    
+    for r in REQUEST:
+      if REQUEST[r].request_departure == j or REQUEST[r].request_arrival == j:
+        rhs_value += 1
+    
+    for p in PLANE:
+      if PLANE[p].plane_arrival == j:
+        rhs_value += 1
+        
+    model.linear_constraints.add(names = ["maxpickup_in_" + j], lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [rhs_value])
+    number_of_constraints += 1
+
+
+# minimum amount of fuel for detour to refueling airport
+
+for i,j in TRIP0:
+  for p in PLANE:
+    thevars = [y[i,j,p],f[i,j,p]]
+    thecoefs = [min_refuel_trip[j,p],-1.0]
+    number_of_nonzeros += 2
+    
+    model.linear_constraints.add(names = ["minfuel_" + i + "_" + j + "_" + p], lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [0])
+    number_of_constraints += 1
+
+print "number of constraints: ",number_of_constraints
+print "number of non-zeros: ",number_of_nonzeros
+
+
+# fix heuristic solution variables
+
+for p,i,j in TIMEFREEPLANESOLUTION:
+  thevars = [y[i,j,p]]
+  thecoefs = [1.0]
+
+  model.linear_constraints.add(names = ["fix_airplane_schedule_" + i + "_" + j + "_" + p], lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [multiple_arc_use[p,i,j]])
+
+
+for p,r,i,j in TIMEFREEREQUESTSOLUTION:
+  if (i,j,r,p) in x and j != REQUEST[r].request_arrival and i != REQUEST[r].request_departure:
+    thevars = [x[i,j,r,p]]
+    thecoefs = [1.0]
+
+    model.linear_constraints.add(names = ["fix_request_schedule_" + i + "_" + j + "_" + r + "_" + p], lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [1.0])
+
+
+# output model
+
+model.write("model_fixed.lp")
+
+
+# set parameters
+
+model.parameters.mip.strategy.heuristicfreq.set(-1)
+model.parameters.emphasis.mip.set(3) 
+ 
+# solve model
+       
+model.solve()
+
 
 # solution interpretation
 
 solution = model.solution
 
-print "Solution status = ", solution.get_status()
+print "Solution status:", solution.get_status()
 
 if solution.is_primal_feasible():
-    print "Solution value = ", solution.get_objective_value()
+    print "Primal solution value:", solution.get_objective_value()
+    solution.write("model_fixed.sol")
 else:
     print "No solution available."
-solutionValues=model.solution.get_values()
-idx2name = { j : n for j, n in enumerate(model.variables.get_names()) }
-name2idx = { n : j for j, n in enumerate(model.variables.get_names()) }
-name2solutionValue = { n : solutionValues[j] for j, n in enumerate(model.variables.get_names()) }
-for key,val in y.iteritems():
-    valStore=solutionValues[name2idx[val]]
-    if valStore > 0.5:
-        print(val+" %f" %valStore)
-for key,val in y_arr.iteritems():
-    valStore=solutionValues[name2idx[val]]
-    if valStore > 0.5:
-        print(val +" %f" %valStore)
-for key,val in y_dep.iteritems():
-    valStore=solutionValues[name2idx[val]]
-    if valStore > 0.5:
-        print(val +" %f" %valStore)
-#print "calls of incumbent callback:",incumbent_cb.number_of_calls
-for key,val in x.iteritems():
-    valStore=solutionValues[name2idx[val]]
-    if valStore > 0.5:
-        print(val+" %f" % valStore)
+    exit()
+
+
+# delete fix_schedule constraints
+
+for p,i,j in TIMEFREEPLANESOLUTION:
+  model.linear_constraints.delete("fix_airplane_schedule_" + i + "_" + j + "_" + p)
+
+for p,r,i,j in TIMEFREEREQUESTSOLUTION:
+  if (i,j,r,p) in x and j != REQUEST[r].request_arrival and i != REQUEST[r].request_departure:
+    model.linear_constraints.delete("fix_request_schedule_" + i + "_" + j + "_" + r + "_" + p)
+
+
+# set callbacks
+
+#incumbent_cb = model.register_callback(CheckSolutuionCallback)
+#lazyconstraint_cb = model.register_callback(SubtourEliminationCallback)
+
+if strategy == '1':
+  print "Strategy: lazy constraints"
+  lazyconstraint_cb = model.register_callback(InfeasibleScheduleMIPCallback)
+  lazyconstraint_cb.number_of_calls = 0
+  lazyconstraint_cb.callback_time = 0
+else:
+  print "Strategy: incumbent branching"
+  incumbent_cb = model.register_callback(CheckSolutionMIPCallback)
+  incumbent_cb.number_of_calls = 0
+  incumbent_cb.number_of_calls_with_new_solution = 0
+  incumbent_cb.callback_time = 0
+  incumbent_cb.solution_pool = []
+
+
+mipinfo_cb = model.register_callback(CountNodesCallback)
+mipinfo_cb.number_of_nodes = 0
+
+# set time limit
+
+model.parameters.timelimit.set(10800) # 10800 = 3h, 86400 = one day (24h)
+model.parameters.mip.tolerances.mipgap.set(0.0)
+model.parameters.mip.strategy.file.set(2) # node file on disk
+#model.parameters.workmem.set(4096.0) # working memory
+
+# solve again
+
+model.write("model.lp")
+
+t0 = time.clock()
+model.solve()
+
+# report solution
+
+print "total time:",time.clock() - t0
+
+if strategy == '1':
+  print "total calls of incumbent callback:",lazyconstraint_cb.number_of_calls
+  print "callback time:",lazyconstraint_cb.callback_time
+else:
+  print "total calls of incumbent callback:",incumbent_cb.number_of_calls
+  print "calls of incumbent callback with new solutions:",incumbent_cb.number_of_calls_with_new_solution
+  print "callback time:",incumbent_cb.callback_time
+
+print "MIP gap:",mipinfo_cb.mip_gap
+print "Dual bound value:",mipinfo_cb.best_obj_val
+
+print "number of nodes:",mipinfo_cb.number_of_nodes
+
+solution = model.solution
+
+print "Solution status:", solution.get_status()
+
+if solution.is_primal_feasible():
+    print "Final solution value:", solution.get_objective_value()
+    solution.write("model.sol")
+else:
+    print "No solution available."
+
+
 
