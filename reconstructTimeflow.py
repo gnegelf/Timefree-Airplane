@@ -7,12 +7,15 @@ def rotateList(l, n):
 def varToKey(varStr,pos):
     return re.split("[_#]",varStr)[pos]
 
-def pathHasArc(path,arc):
+def arcAmount(path,arc):
+    res = 0
     for i in range(len(path)-1):
-        if path[i]== arc[0] and path[i+1]==arc[1]:
-            return 1
+        if path[i] == arc[0] and path[i+1]==arc[1]:
+            res += 1
+    
+    return res
 
-
+infeasible = 0
 
 #turns a list of strings with variable names into a list of paths
 def solToAirports(solutionStringList,p):
@@ -101,7 +104,7 @@ assignedRequests = {}
 
 
 for p in PLANE:
-    
+#for p in ['1']:    
     print('Checking PLANE ' + p)
     
     assignedRequests[p] = {}
@@ -152,12 +155,8 @@ for p in PLANE:
         continue
     
     for i,j in TRIP0:
-        if pathHasArc(paths[p][0],[i,j]):
-            fullModels[p].variables.set_upper_bounds( [(y2[i,j,p],1.0) ] )
-            fullModels[p].variables.set_lower_bounds( [(y2[i,j,p],1.0) ] )
-        else:
-            fullModels[p].variables.set_upper_bounds( [(y2[i,j,p],0.0) ] )
-            fullModels[p].variables.set_lower_bounds( [(y2[i,j,p],0.0) ] )
+        fullModel[p].variables.set_upper_bounds( [(y2[i,j,p],arcAmount(paths[p][0],[i,j])) ] )
+        fullModel[p].variables.set_lower_bounds( [(y2[i,j,p],arcAmount(paths[p][0],[i,j])) ] )
     
     
     requestArcs = {}
@@ -185,22 +184,24 @@ for p in PLANE:
             xPaths[p,r]=solToPaths(xString[r])
     
     for r,assigned in assignedRequests[p].iteritems():
-        fullModels[p].variables.set_upper_bounds( [(r2[r,p], assigned)])
-        fullModels[p].variables.set_lower_bounds( [(r2[r,p], assigned)])
+        fullModel[p].variables.set_upper_bounds( [(r2[r,p], assigned)])
+        fullModel[p].variables.set_lower_bounds( [(r2[r,p], assigned)])
     
     #converts the analyzed y variables to a set of longest paths
     airports=solToAirports(yString,p)
     
     
     
-    fullModels[p].solve()
-    if not fullModels[p].solution.is_primal_feasible():
+    fullModel[p].solve()
+    if not fullModel[p].solution.is_primal_feasible():
         print "plane " + p + " infeasible"
+        infeasible = 1
         for s in airports:
             if AirportNum[p,s][-1] < airports[s]:
                 AirportNum[p,s].append(AirportNum[p,s][-1]+1)
         #break  
     
-    
+if infeasible:
+    print("Solution infeasible")    
 print(flyTime)
 print(paths)
