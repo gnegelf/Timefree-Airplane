@@ -1077,11 +1077,19 @@ comment_line = re.compile('#');
 debugModels = 1
 restart = 1
 strategy = 0
-directory = 'Testinstances/A2-BUF_A2-ANT'
+directory = 'Testinstances/A2-LEO_A2-BEE'
+if not "oldDirectory" in globals():
+    restart = 1
+    debugModels = 1
+else:
+    if oldDirectory != directory:
+        restart = 1
+        debugModels = 1
+oldDirectory = directory
 timeflow = 1
 callbackOn = 0
 breakIncumbent = 1
-
+breakAlways = 0
 
 totallySolved = [0]
 t0 = time.time()
@@ -1556,16 +1564,55 @@ if restart or not "PLANE" in globals():
         multiple_arc_use[p,i,j] = 1
     
     
+    
+    
+    maxStops1 = {}
+    for i in AIRPORT:
+      maxStops1[i] = 0
+      anyfuel = 0
+      for ft in AIRPORT[i].fuel:
+        if AIRPORT[i].fuel[ft] == '1':
+          anyfuel += 1
+          
+      if anyfuel == 0:
+        for r in REQUEST:
+          if REQUEST[r].request_departure == i or REQUEST[r].request_arrival == i:
+            maxStops1[i] += 1
+        
+        for p in PLANE:
+          if PLANE[p].plane_departure == i:
+            maxStops1[i] += 1 
+      else:
+        maxStops1[i] = 5
+
+    maxStops2 = {}
+    for j in AIRPORT:
+      maxStops2[j] = 0
+      anyfuel = 0
+      for ft in AIRPORT[j].fuel:
+        if AIRPORT[j].fuel[ft] == '1':
+          anyfuel += 1
+          
+      if anyfuel == 0:
+        for r in REQUEST:
+          if REQUEST[r].request_departure == j or REQUEST[r].request_arrival == j:
+            maxStops2[j] += 1
+        
+        for p in PLANE:
+          if PLANE[p].plane_arrival == j:
+            maxStops2[j] += 1
+            
+    AirportNum2 = {}
+    for i in AIRPORT:
+        for p in PLANE:
+            AirportNum2[p,i] = range(1,1+max([maxStops1[i],maxStops2[i],1]))
 
     AirportNum = {}
     for i in AIRPORT:
         for p in PLANE:
             AirportNum[p,i] = [1]
     
-    AirportNum2 = {}
-    for i in AIRPORT:
-        for p in PLANE:
-            AirportNum2[p,i] = [1,2,3,4,5]
+    
 
 # ----------------
 # MODEL GENERATION
@@ -3339,6 +3386,8 @@ while not totallySolved[0]:
         for p in PLANE:
           if PLANE[p].plane_departure == i:
             rhs_value += 1   
+        print i
+        print rhs_value
         model.linear_constraints.add(names = ["maxpickup_out_" + i], lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [rhs_value])
         number_of_constraints += 1
     
@@ -3499,6 +3548,12 @@ while not totallySolved[0]:
     
     
     model.solve()
+    
+    if model.solution.get_status() == 107:
+        print("Timed out stopping loop")
+        break
+    if breakAlways:
+        break
 
 # report solution
 
