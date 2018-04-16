@@ -1077,7 +1077,7 @@ comment_line = re.compile('#');
 debugModels = 1
 restart = 1
 strategy = 0
-directory = 'Testinstances/A2-LEO_A2-BEE'
+directory = 'Testinstances/A2-GNU_A2-BEE'
 if not "oldDirectory" in globals():
     restart = 1
     debugModels = 1
