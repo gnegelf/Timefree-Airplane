@@ -124,6 +124,24 @@ class breakIncumbentCallback(IncumbentCallback):
     global TIMEFREEPLANESOLUTION
     global TIMEFREEREQUESTSOLUTION
     all_values = self.get_values()
+    
+    
+    """
+    all_values_int = [int(round(val)) for val in all_values]
+    
+    all_values_int_tuple = tuple(all_values_int)
+    
+    
+    if all_values_int_tuple in self.solution_pool:
+      #print "DIE HATTEN WIR SCHON"
+      self.reject()
+      return
+    else:
+      #if self.get_objective_value() >18191 and self.get_objective_value()<18193:
+      #  return
+      #print "DIE IST NEU"
+      self.solution_pool.append(all_values_int_tuple)
+    """
     totallySolved[0] = 1
     
     paths = {}
@@ -201,10 +219,14 @@ class breakIncumbentCallback(IncumbentCallback):
         
         fullModel[p].solve()
         if not fullModel[p].solution.is_primal_feasible():
+            self.number_of_infeasibles += 1
+            print "\n number of infeasibles: " +str(self.number_of_infeasibles) +"\n"
             totallySolved[0] = 0
             for s in airports:
                 if AirportNum[p,s][-1] < airports[s]:
                     AirportNum[p,s].append(AirportNum[p,s][-1]+1)
+            #if self.number_of_infeasibles < 5:
+            #    self.reject()
             return
         
     if totallySolved[0]:
@@ -292,37 +314,37 @@ comment_line = re.compile('#');
 
 #directory = sys.argv[1]
 #strategy = sys.argv[2]
-debugModels = 1
+debugModels = 0
 restart = 1
 strategy = 0
 timeflow = 1
 callbackOn = 0
 breakIncumbent = 1
 breakAlways = 0
-directories = {'BUF-AIV':'Testinstances/A2-BUF_A2-AIV',
-               'BUF-ANT':'Testinstances/A2-BUF_A2-ANT',
-               'BUF-BEE':'Testinstances/A2-BUF_A2-BEE',
-               'BUF-BOK':'Testinstances/A2-BUF_A2-BOK',
-               'BUF-EGL':'Testinstances/A2-BUF_A2-EGL',
-               'BUF-GNU':'Testinstances/A2-BUF_A2-GNU',
-               'BUF-JKL':'Testinstances/A2-BUF_A2-JKL',
-               'BUF-LEO':'Testinstances/A2-BUF_A2-LEO',
-               #'BUF-NAS':'Testinstances/A2-BUF_A2-NAS',
-               #'BUF-OWL':'Testinstances/A2-BUF_A2-OWL',
-               #'BUF-ZEB':'Testinstances/A2-BUF_A2-ZEB',
-               #'EGL-BEE':'Testinstances/A2-EGL_A2-BEE',
-               #'EGL-GNU':'Testinstances/A2-EGL_A2-GNU',
-               #'EGL-LEO':'Testinstances/A2-EGL_A2-LEO',
-               #'GNU-BEE':'Testinstances/A2-GNU_A2-BEE',
-               #'GNU-JKL':'Testinstances/A2-GNU_A2-JKL',
-               #'GNU-LEO':'Testinstances/A2-GNU_A2-LEO',
-               #'LEO-AIV':'Testinstances/A2-LEO_A2-AIV',
-               #'LEO-ANT':'Testinstances/A2-LEO_A2-ANT',
-               #'LEO-BEE':'Testinstances/A2-LEO_A2-BEE',
-               #'LEO-BOK':'Testinstances/A2-LEO_A2-BEE',
-               #'LEO-JKL':'Testinstances/A2-LEO_A2-JKL',
+directories = {#'BUF-AIV':'Testinstances/A2-BUF_A2-AIV',#check
+               #'BUF-ANT':'Testinstances/A2-BUF_A2-ANT',#check
+               #'BUF-BEE':'Testinstances/A2-BUF_A2-BEE',#check
+               #'BUF-BOK':'Testinstances/A2-BUF_A2-BOK',#check
+               #'BUF-EGL':'Testinstances/A2-BUF_A2-EGL',#check
+               #'BUF-GNU':'Testinstances/A2-BUF_A2-GNU',#check
+               #'BUF-JKL':'Testinstances/A2-BUF_A2-JKL',#check
+               #'BUF-LEO':'Testinstances/A2-BUF_A2-LEO',#check
+               #'BUF-NAS':'Testinstances/A2-BUF_A2-NAS',#check
+               #'BUF-OWL':'Testinstances/A2-BUF_A2-OWL',#check
+               #'BUF-ZEB':'Testinstances/A2-BUF_A2-ZEB',#check
+               #'EGL-BEE':'Testinstances/A2-EGL_A2-BEE',#check
+               'EGL-GNU':'Testinstances/A2-EGL_A2-GNU',#check
+               #'EGL-LEO':'Testinstances/A2-EGL_A2-LEO',#check
+               #'GNU-BEE':'Testinstances/A2-GNU_A2-BEE',#check
+               #'GNU-JKL':'Testinstances/A2-GNU_A2-JKL',#check
+               #'GNU-LEO':'Testinstances/A2-GNU_A2-LEO',#check
+               #'LEO-AIV':'Testinstances/A2-LEO_A2-AIV',#check
+               #'LEO-ANT':'Testinstances/A2-LEO_A2-ANT',#check
+               #'LEO-BEE':'Testinstances/A2-LEO_A2-BEE',#check more than og
+               #'LEO-BOK':'Testinstances/A2-LEO_A2-BOK',#check
+               #'LEO-JKL':'Testinstances/A2-LEO_A2-JKL',#check
                #'LEO-NAS':'Testinstances/A2-LEO_A2-NAS',
-               #'LEO-OWL':'Testinstances/A2-LEO_A2-OWL'
+               #'#LEO-OWL':'Testinstances/A2-LEO_A2-OWL'#check
                }
 
 #file = open("results.txt", "w+")
@@ -836,6 +858,8 @@ for instanceName,directory in directories.iteritems():
             
             for p in PLANE:
               if PLANE[p].plane_departure == i:
+                maxStops1[i] += 1
+              if PLANE[p].destination == i:
                 maxStops1[i] += 1 
           else:
             maxStops1[i] = 5
@@ -855,6 +879,8 @@ for instanceName,directory in directories.iteritems():
             
             for p in PLANE:
               if PLANE[p].plane_arrival == j:
+                maxStops2[j] += 1
+              if PLANE[p].origin == j:
                 maxStops2[j] += 1
                 
         AirportNum2 = {}
@@ -1300,6 +1326,16 @@ for instanceName,directory in directories.iteritems():
                         
                         fullModel[p].linear_constraints.add(names = ["noflight_notime_" + i + str(n1) + "_" + j + str(n2) + "_" + p], 
                                                      lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [0.0])
+            for i,j in TRIP0:
+                for n1 in AirportNum2[p,i]:
+                    for n2 in AirportNum2[p,j]:
+                      
+                        #print i,j,p
+                        thevars = [d2[i,j,p,n1,n2],y2[i,j,p,n1,n2]]
+                        thecoefs = [1.0,-plane_min_timestep[p]]
+                        
+                        fullModel[p].linear_constraints.add(names = ["aflight_atime_" + i + str(n1) + "_" + j + str(n2) + "_" + p], 
+                                                     lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["G"], rhs = [0.0])
             
             
             for j in AIRPORT:
@@ -1399,10 +1435,11 @@ for instanceName,directory in directories.iteritems():
     
     
     
-    
+    #___________________________________________________ main loop________________
     t0 = time.time()
     while not totallySolved[0]:
         graphIterations[instanceName] += 1
+        newSolutions=0
         tOld=time.time()
         model = cplex.Cplex()
         
@@ -1447,7 +1484,7 @@ for instanceName,directory in directories.iteritems():
           for p in PLANE:
               for n1 in AirportNum[p,i]:
                   for n2 in AirportNum[p,j]:
-                      if n1 == AirportNum[p,i][-1] or n2 == AirportNum[p,j][-1]:
+                      if n1 == AirportNum[p,i][-1] and n2 == AirportNum[p,j][-1]:
                           y[i,j,p,n1,n2] = "y#" + i  + "_" + j  + "_" + p + "_" + str(n1) + "_" + str(n2)
                           model.variables.add(obj = [travelcost[i,j,p]], names = [y[i,j,p,n1,n2]], lb = [0], types = ["I"])
                           number_of_variables += 1
@@ -1908,6 +1945,7 @@ for instanceName,directory in directories.iteritems():
                   number_of_constraints += 1
         
         # time constraints
+        
         if timeflow:
             for i,j in TRIP0:
                 for p in PLANE:
@@ -1922,6 +1960,18 @@ for instanceName,directory in directories.iteritems():
                         model.linear_constraints.add(names = ["noflight_notime_" + i + str(n1) + "_" + j + str(n2) + "_" + p], 
                                                      lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [0.0])
                         number_of_constraints += 1
+            
+            for i,j in TRIP0:
+                for p in PLANE:
+                    for n1 in AirportNum[p,i]:
+                        for n2 in AirportNum[p,j]:
+                          
+                            #print i,j,p
+                            thevars = [d[i,j,p,n1,n2],y[i,j,p,n1,n2]]
+                            thecoefs = [1.0,-plane_min_timestep[p]]
+                            
+                            model.linear_constraints.add(names = ["aflight_atime_" + i + str(n1) + "_" + j + str(n2) + "_" + p], 
+                                                         lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["G"], rhs = [0.0])
             
             
             for j in AIRPORT:
@@ -1971,25 +2021,54 @@ for instanceName,directory in directories.iteritems():
                     for i,j in REQUEST_TRIP0[r]:
                         for n1 in AirportNum[p,i]:
                             for n2 in AirportNum[p,j]:
-                                thevars = [d[i,j,p,n1,n2],x[i,j,r,p,n1,n2]]
-                                thecoefs = [1,plane_max_timestep[p]]
-                                rhs = latest_arrival_timesteps[r]+plane_max_timestep[p]-turnover_travel_timesteps[i,j,p]#+turnover_timesteps[i,p]#TODO: Verify this timewindow
-                                number_of_nonzeros += 2
-                                        
-                                model.linear_constraints.add(names = ["timewindow1_" + i + str(n1) + '_' + j + str(n2) + '_' + r + "_" + p], 
-                                                             lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [rhs])
-                                
-                                number_of_constraints += 1
-                                
-                                thecoefs = [1,-plane_max_timestep[p]]
-                                rhs = earliest_departure_timesteps[r]-plane_max_timestep[p]-max_turnover_timesteps[r]
-                                number_of_nonzeros += 2
-                                        
-                                model.linear_constraints.add(names = ["timewindow2_" + i + str(n1) + '_' + j + str(n2) + '_' + r + "_" + p], 
-                                                             lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["G"], rhs = [rhs])
-                                
-                                number_of_constraints += 1
-        
+                                if not( n1==AirportNum[p,i][-1] and n2 == AirportNum[p,j][-1] ):
+                                    thevars = [d[i,j,p,n1,n2],x[i,j,r,p,n1,n2]]
+                                    thecoefs = [1,plane_max_timestep[p]]
+                                    rhs = latest_arrival_timesteps[r]+plane_max_timestep[p]-turnover_travel_timesteps[i,j,p]#+turnover_timesteps[i,p]#TODO: Verify this timewindow
+                                    number_of_nonzeros += 2
+                                            
+                                    model.linear_constraints.add(names = ["timewindow1_" + i + str(n1) + '_' + j + str(n2) + '_' + r + "_" + p], 
+                                                                 lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [rhs])
+                                    
+                                    number_of_constraints += 1
+                                    thecoefs = [1,-plane_max_timestep[p]]
+                                    rhs = earliest_departure_timesteps[r]-plane_max_timestep[p]-max_turnover_timesteps[r]
+                                    number_of_nonzeros += 2
+                                            
+                                    model.linear_constraints.add(names = ["timewindow2_" + i + str(n1) + '_' + j + str(n2) + '_' + r + "_" + p], 
+                                                                 lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["G"], rhs = [rhs])
+                                    
+                                    number_of_constraints += 1
+                                else:
+                                    m="di"+str(i)+str(j)+str(r)+str(p)+str(n1)+str(n2)
+                                    model.variables.add( names = [m], lb = [0],  types = ["I"])
+                                    thevars = [m,y[i,j,p,n1,n2],x[i,j,r,p,n1,n2]]
+                                    thecoefs = [1,-1,1]
+                                    number_of_variables += 1
+                                    model.linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [0.0])
+                                    number_of_constraints += 1
+                                    
+                                    thevars = [d[i,j,p,n1,n2],x[i,j,r,p,n1,n2],m]
+                                    thecoefs = [1,plane_max_timestep[p],-plane_max_timestep[p]]
+                                    rhs = latest_arrival_timesteps[r]+plane_max_timestep[p]-turnover_travel_timesteps[i,j,p]#+turnover_timesteps[i,p]#TODO: Verify this timewindow
+                                    number_of_nonzeros += 3
+                                            
+                                    model.linear_constraints.add(names = ["timewindow1_" + i + str(n1) + '_' + j + str(n2) + '_' + r + "_" + p], 
+                                                                 lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [rhs])
+                                    
+                                    number_of_constraints += 1
+                                    
+                                    
+                                    thevars = [d[i,j,p,n1,n2],x[i,j,r,p,n1,n2]]
+                                    thecoefs = [1,-plane_max_timestep[p]]
+                                    rhs = earliest_departure_timesteps[r]-plane_max_timestep[p]-max_turnover_timesteps[r]
+                                    number_of_nonzeros += 3
+                                            
+                                    model.linear_constraints.add(names = ["timewindow2_" + i + str(n1) + '_' + j + str(n2) + '_' + r + "_" + p], 
+                                                                 lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["G"], rhs = [rhs])
+                                    
+                                    number_of_constraints += 1
+            
         # weight limit (=max fuel)
         
         for i,j in TRIP0:
@@ -2099,9 +2178,8 @@ for instanceName,directory in directories.iteritems():
             
             for p in PLANE:
               if PLANE[p].plane_departure == i:
-                rhs_value += 1   
-            print i
-            print rhs_value
+                rhs_value += 1
+            
             model.linear_constraints.add(names = ["maxpickup_out_" + i], lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [rhs_value])
             number_of_constraints += 1
         
@@ -2223,7 +2301,8 @@ for instanceName,directory in directories.iteritems():
         
         if breakIncumbent:
             incumbent_cb = model.register_callback(breakIncumbentCallback)
-        
+            #incumbent_cb.solution_pool =  []
+            incumbent_cb.number_of_infeasibles = 0
             
         
         # set time limit
@@ -2265,8 +2344,113 @@ for instanceName,directory in directories.iteritems():
     file.close()
     
     
-    
-    
+"""    
+A=[ 0.0   
+, 13.01
+,1.15
+, 0.0
+, 4.35
+, 0.86
+, 6.55
+, 6.09
+, 0.0
+, 0.0
+, 0.0
+, 0.0
+, 0.0
+, 0.0
+, 0.0
+,0.0
+, 0.0
+, 0.0
+,0.0
+, 0.0
+, 0.0
+, 0.0
+,0.0
+, 0.0]
+"""
 
+"""
+A=[
+12613
+,20339
+,17120
+,12917
+,22112
+,17350
+,20773
+,24225
+,15549
+,16797
+,14687
+,16652
+,19225
+,19387
+,11165
+,11098
+,17862
+,13614
+,16678
+,18899
+,15372
+,17551
+,18191
+,15827
+]
 
+A=[
+,12613
+,17693
+,16922
+,12917
+,21150 
+,17200 
+,19413
+,22750
+,15549
+,16797 
+,14687
+,16652
+,19225
+,19387
+,11165
+,11098
+,17862
+,13614
+,16678
+,18899
+,15372
+,17551
+,18191
+,15827
+]
 
+A=[
+1
+,10800
+,10800
+,10
+,10800
+,10800
+,10800
+,10800
+,7 
+,234
+,24 
+,144 
+,47 
+,11
+,2528
+,923
+,31
+,0
+,0 
+,3874 
+,11
+,13
+,7
+,0
+]
+
+"""

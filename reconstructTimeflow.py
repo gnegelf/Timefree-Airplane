@@ -117,7 +117,12 @@ for p in PLANE:
         valStore=solutionValues[name2idx[val]]
         if valStore > 0.5:
             print(val+" %f" %valStore)
-    
+    for key,val in d.iteritems():
+        if key[2]!=p:
+            continue
+        valStore=solutionValues[name2idx[val]]
+        if valStore > 0.5:
+            print(val+" %f" %valStore)
     for key,val in y_arr.iteritems():
         if key[0]!=p:
             continue
@@ -131,7 +136,19 @@ for p in PLANE:
         valStore=solutionValues[name2idx[val]]
         if valStore > 0.5:
             print(val +" %f" %valStore)
+    for key,val in d_arr.iteritems():
+        if key[0]!=p:
+            continue
+        valStore=solutionValues[name2idx[val]]
+        if valStore > 0.5:
+            print(val +" %f" %valStore)
     
+    for key,val in d_dep.iteritems():
+        if key[0]!=p:
+            continue
+        valStore=solutionValues[name2idx[val]]
+        if valStore > 0.5:
+            print(val +" %f" %valStore)
     
     #read the y-variables that are set for p
     yString=[]
