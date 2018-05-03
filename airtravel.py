@@ -59,6 +59,8 @@ class CheckSolutionMIPCallback(IncumbentCallback):
       self.reject()
       return
     else:
+      #if self.get_objective_value() >18191 and self.get_objective_value()<18193:
+      #  return
       #print "DIE IST NEU"
       self.solution_pool.append(all_values_int_tuple)
       self.number_of_calls_with_new_solution += 1
@@ -1727,7 +1729,7 @@ comment_line = re.compile('#');
 #strategy = sys.argv[2]
 
 strategy = 0
-directory = 'Testinstances/A2-BUF_A2-AIV'
+directory = 'Testinstances/A2-LEO_A2-NAS'
 
 # ---------------------
 # reading airplanes.dat

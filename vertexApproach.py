@@ -276,7 +276,7 @@ def printRequests(Request):
 
           
 #directory = sys.argv[1]
-directory='Testinstances/A2-LEO_A2-JKL'
+directory='Testinstances/A2-LEO_A2-NAS'
 
 
 debugModels=0
