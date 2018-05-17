@@ -228,7 +228,7 @@ class breakIncumbentCallback(IncumbentCallback):
             #if self.number_of_infeasibles < 5:
             #    self.reject()
             return
-        
+
     if totallySolved[0]:
         if self.get_objective_value() < bestSolution[instanceName]:
             bestSolution[instanceName] = self.get_objective_value()
@@ -314,7 +314,7 @@ comment_line = re.compile('#');
 
 #directory = sys.argv[1]
 #strategy = sys.argv[2]
-debugModels = 0
+debugModels = 1
 restart = 1
 strategy = 0
 timeflow = 1
@@ -333,7 +333,7 @@ directories = {#'BUF-AIV':'Testinstances/A2-BUF_A2-AIV',#check
                #'BUF-OWL':'Testinstances/A2-BUF_A2-OWL',#check
                #'BUF-ZEB':'Testinstances/A2-BUF_A2-ZEB',#check
                #'EGL-BEE':'Testinstances/A2-EGL_A2-BEE',#check
-               'EGL-GNU':'Testinstances/A2-EGL_A2-GNU',#check
+               #'EGL-GNU':'Testinstances/A2-EGL_A2-GNU',#check
                #'EGL-LEO':'Testinstances/A2-EGL_A2-LEO',#check
                #'GNU-BEE':'Testinstances/A2-GNU_A2-BEE',#check
                #'GNU-JKL':'Testinstances/A2-GNU_A2-JKL',#check
@@ -344,7 +344,7 @@ directories = {#'BUF-AIV':'Testinstances/A2-BUF_A2-AIV',#check
                #'LEO-BOK':'Testinstances/A2-LEO_A2-BOK',#check
                #'LEO-JKL':'Testinstances/A2-LEO_A2-JKL',#check
                #'LEO-NAS':'Testinstances/A2-LEO_A2-NAS',
-               #'#LEO-OWL':'Testinstances/A2-LEO_A2-OWL'#check
+               '#LEO-OWL':'Testinstances/A2-LEO_A2-OWL'#check
                }
 
 #file = open("results.txt", "w+")
@@ -497,6 +497,7 @@ for instanceName,directory in directories.iteritems():
         
         REQUEST = {}
         
+        
         for line in entries:
           if comment_line.search(line) == None:
             datas = re.split("\s+", line)
@@ -504,6 +505,14 @@ for instanceName,directory in directories.iteritems():
               ID,origin,destination,earliest_departure_time,earliest_departure_day,latest_arrival_time,latest_arrival_day,passengers,weight,max_stops,max_detour = datas
               REQUEST[ID] = __REQUEST__(origin,destination,earliest_departure_time,earliest_departure_day,latest_arrival_time,latest_arrival_day,passengers,weight,max_stops,max_detour)
         
+        REQUESTNEU = {}
+        zz=0
+        for r in REQUEST:
+            REQUESTNEU[r] = REQUEST[r] 
+            zz+=1
+            if zz>9:
+                break
+        #REQUEST=REQUESTNEU
         
         # ------------------------
         # reading timedelta.dat

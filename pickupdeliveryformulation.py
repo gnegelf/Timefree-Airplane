@@ -72,7 +72,7 @@ class __WEIGHTLIMIT__(object):
 class __TRIP__(object):
   def __init__(self,distance=None):
     self.distance = float(distance)
-    
+
 class __ARC__(object):
     def __init__(self,distance,fuel,stops,seats,traveltime,s,d,w):
         self.distance=distance
@@ -85,7 +85,8 @@ class __ARC__(object):
         self.weight=w
 
 class __VERTEX__(object):
-    def __init__(self,name,departure_time,arrival_time,plane):
+    def __init__(self,name,departure_time,arrival_time,plane,airport):
+        self.airport=airport
         self.name=name
         self.arrival_time=arrival_time
         self.departure_time=departure_time
@@ -124,7 +125,7 @@ directories = {'BUF-AIV':'Testinstances/A2-BUF_A2-AIV',#check
                #'LEO-BOK':'Testinstances/A2-LEO_A2-BOK',#check
                #'LEO-JKL':'Testinstances/A2-LEO_A2-JKL',#check
                #'LEO-NAS':'Testinstances/A2-LEO_A2-NAS',
-               #'#LEO-OWL':'Testinstances/A2-LEO_A2-OWL'#check
+               #'LEO-OWL':'Testinstances/A2-LEO_A2-OWL'#check
                }
 
 #file = open("results.txt", "w+")
@@ -440,7 +441,9 @@ for instanceName,directory in directories.iteritems():
         
         for p in PLANE:
           for i, j in TRIP:
-            max_trip_payload[i,j,p] = min(max_takeoff_payload[i,p] + fuelconsumption[i,j,p], max_landing_payload[j,p])
+            max_trip_payload[i,j,p] = min(max_takeoff_payload[i,p]+ fuelconsumption[i,j,p], max_landing_payload[j,p] )
+            #max_trip_payload[i,j,p] = min(max_takeoff_payload[i,p], max_landing_payload[j,p] + fuelconsumption[i,j,p])
+
         
         
         max_trip_fuel = {}
@@ -619,16 +622,22 @@ for instanceName,directory in directories.iteritems():
           else:
             TIMEFREEPLANESOLUTION[p,i,j] = 1
         
-
-
+    REQUESTNEU = {}
+    zz=0
+    for r in REQUEST:
+        REQUESTNEU[r] = REQUEST[r] 
+        zz+=1
+        if zz>9:
+            break
+    #REQUEST = REQUESTNEU
     A = {}
     V = {}
     P_s = {}
     P_d = {}
     
     for p in PLANE:
-        P_s[p] = __VERTEX__(p + "_" + "ori_" + PLANE[p].origin,plane_min_timestep[p],plane_max_timestep[p],p)
-        P_d[p] = __VERTEX__(p + "_" + "desti_" + PLANE[p].destination,plane_min_timestep[p],plane_max_timestep[p],p)
+        P_s[p] = __VERTEX__(p + "_" + "ori_" + PLANE[p].origin,plane_min_timestep[p],plane_max_timestep[p],p,PLANE[p].origin)
+        P_d[p] = __VERTEX__(p + "_" + "desti_" + PLANE[p].destination,plane_min_timestep[p],plane_max_timestep[p],p,PLANE[p].destination)
         V[P_s[p].name]= P_s[p]
         V[P_d[p].name]= P_d[p]
     
@@ -639,13 +648,13 @@ for instanceName,directory in directories.iteritems():
         R_s[p] = {}
         R_d[p] = {}
         for r in REQUEST:
-            R_s[p][r] = __VERTEX__(r + "_" + p + "_" + "ori_" + REQUEST[r].origin,min(REQUEST_TIMESTEP[r]),max(REQUEST_TIMESTEP[r]),p)
+            R_s[p][r] = __VERTEX__(r + "_" + p + "_" + "ori_" + REQUEST[r].origin,earliest_departure_timesteps[r]-max_turnover_timesteps[r],latest_arrival_timesteps[r],p,REQUEST[r].origin)
             R_d[p][r] = __VERTEX__(r + "_" + p + "_" + "desti_" + REQUEST[r].destination,
-               min(REQUEST_TIMESTEP[r]),max(REQUEST_TIMESTEP[r]),p)
+               earliest_departure_timesteps[r]-max_turnover_timesteps[r],latest_arrival_timesteps[r],p,REQUEST[r].destination)
             V[R_s[p][r].name] = R_s[p][r]
             V[R_d[p][r].name] = R_d[p][r]
     
-    fuelstops=1
+    fuelstops=3
     F = {}
     
     for p in PLANE:
@@ -653,7 +662,7 @@ for instanceName,directory in directories.iteritems():
         for f in AIRPORT:
             if AIRPORT[f].fuel[PLANE[p].required_fueltype] != '0':
                 for i in range(0,fuelstops):
-                    F[p][f,str(i)] =  __VERTEX__(p + "_" + "fuel_%d" % i + f[0]+ "_" + f[1],plane_min_timestep[p],plane_max_timestep[p],p)
+                    F[p][f,str(i)] =  __VERTEX__(p + "_" + "fuel_%d" % i + f,plane_min_timestep[p],plane_max_timestep[p],p,f)
                     V[F[p][f,str(i)].name] = F[p][f,str(i)]
     
     
@@ -663,18 +672,18 @@ for instanceName,directory in directories.iteritems():
             v2=f[0]
             if v1 != v2:
                 vI.successors.append(F[p][f].name)
-                A[vI.name,F[p][f].name,p] = __ARC__(TRIP[v1,v2].distance,fuelconsumption[v1,v2,p],int(v1==v2),0,
+                A[vI.name,F[p][f].name,p] = __ARC__(TRIP[v1,v2].distance,fuelconsumption[v1,v2,p],int(v1!=v2),0,
                  turnover_travel_timesteps[v1,v2,p],v1,v2,0.0)
         for r in R_s[p]:
             vI.successors.append(R_s[p][r].name)
             v1 = PLANE[p].origin
             v2 = REQUEST[r].origin
-            A[vI.name,R_s[p][r].name,p] = __ARC__(TRIP[v1,v2].distance,fuelconsumption[v1,v2,p],int(v1==v2),0,
+            A[vI.name,R_s[p][r].name,p] = __ARC__(TRIP[v1,v2].distance,fuelconsumption[v1,v2,p],int(v1!=v2),0,
              turnover_travel_timesteps[v1,v2,p],v1,v2,0.0)
         vI.successors.append(P_d[p].name)
         v1 = PLANE[p].origin
         v2 = PLANE[p].destination
-        A[vI.name,P_d[p].name,p] = __ARC__(TRIP[v1,v2].distance,fuelconsumption[v1,v2,p],int(v1==v2),0,
+        A[vI.name,P_d[p].name,p] = __ARC__(TRIP[v1,v2].distance,fuelconsumption[v1,v2,p],int(v1!=v2),0,
              turnover_travel_timesteps[v1,v2,p],v1,v2,0.0)
     
     for p,vI in P_d.iteritems():
@@ -683,14 +692,14 @@ for instanceName,directory in directories.iteritems():
             v2=PLANE[p].destination
             if v1 != v2:
                 vI.predecessors.append(F[p][f].name)
-                A[F[p][f].name,vI.name,p] = __ARC__(TRIP[v1,v2].distance,fuelconsumption[v1,v2,p],int(v1==v2),0,
+                A[F[p][f].name,vI.name,p] = __ARC__(TRIP[v1,v2].distance,fuelconsumption[v1,v2,p],int(v1!=v2),0,
                  turnover_travel_timesteps[v1,v2,p],v1,v2,0.0)
         for r in R_d[p]:
             vI.predecessors.append(R_d[p][r].name)
             v1 = REQUEST[r].destination
             v2 = PLANE[p].destination
-            A[R_d[p][r].name,vI.name,p] = __ARC__(TRIP[v1,v2].distance,fuelconsumption[v1,v2,p],int(v1==v2),-REQUEST[r].passengers,
-             turnover_travel_timesteps[v1,v2,p],v1,v2,REQUEST[r].weight)
+            A[R_d[p][r].name,vI.name,p] = __ARC__(TRIP[v1,v2].distance,fuelconsumption[v1,v2,p],int(v1!=v2),-REQUEST[r].passengers,
+             turnover_travel_timesteps[v1,v2,p],v1,v2,-REQUEST[r].weight)
         vI.predecessors.append(P_s[p].name)
     
     for p in PLANE:
@@ -700,7 +709,7 @@ for instanceName,directory in directories.iteritems():
                 vI.successors.append(R_d[p][r2].name)#TODO: condition on time windows
                 v1 = REQUEST[r].origin
                 v2 = REQUEST[r2].destination
-                A[vI.name,R_d[p][r2].name,p] = __ARC__(TRIP[v1,v2].distance,fuelconsumption[v1,v2,p],int(v1==v2),REQUEST[r].passengers,
+                A[vI.name,R_d[p][r2].name,p] = __ARC__(TRIP[v1,v2].distance,fuelconsumption[v1,v2,p],int(v1!=v2),REQUEST[r].passengers,
                      turnover_travel_timesteps[v1,v2,p],v1,v2,REQUEST[r].weight)
                 if r2 != r:
                     vI.predecessors.append(R_d[p][r2].name)#TODO: condition on time windows
@@ -709,7 +718,7 @@ for instanceName,directory in directories.iteritems():
                     vI.successors.append(R_s[p][r2].name)#TODO: condition on time windows
                     v1 = REQUEST[r].origin
                     v2 = REQUEST[r2].origin
-                    A[vI.name,R_s[p][r2].name,p] = __ARC__(TRIP[v1,v2].distance,fuelconsumption[v1,v2,p],int(v1==v2),REQUEST[r].passengers,
+                    A[vI.name,R_s[p][r2].name,p] = __ARC__(TRIP[v1,v2].distance,fuelconsumption[v1,v2,p],int(v1!=v2),REQUEST[r].passengers,
                          turnover_travel_timesteps[v1,v2,p],v1,v2,REQUEST[r].weight)
                     vI.predecessors.append(R_s[p][r2].name)#TODO: condition on time windows
             for f in F[p]:
@@ -718,11 +727,11 @@ for instanceName,directory in directories.iteritems():
                 if v1 !=v2:
                     vI.successors.append(F[p][f].name)
                     vI.predecessors.append(F[p][f].name)
-                    A[vI.name,F[p][f].name,p] = __ARC__(TRIP[v1,v2].distance,fuelconsumption[v1,v2,p],int(v1==v2),REQUEST[r].passengers,
+                    A[vI.name,F[p][f].name,p] = __ARC__(TRIP[v1,v2].distance,fuelconsumption[v1,v2,p],int(v1!=v2),REQUEST[r].passengers,
                              turnover_travel_timesteps[v1,v2,p],v1,v2,REQUEST[r].weight)
                     v2 = REQUEST[r].origin
                     v1 = f[0]
-                    A[F[p][f].name,vI.name,p] = __ARC__(TRIP[v1,v2].distance,fuelconsumption[v1,v2,p],int(v1==v2),0,
+                    A[F[p][f].name,vI.name,p] = __ARC__(TRIP[v1,v2].distance,fuelconsumption[v1,v2,p],int(v1!=v2),0.0,
                              turnover_travel_timesteps[v1,v2,p],v1,v2,0.0)
     
     for p in PLANE:
@@ -733,7 +742,7 @@ for instanceName,directory in directories.iteritems():
                     vI.successors.append(R_d[p][r2].name)#TODO: condition on time windows
                     v1 = REQUEST[r].destination
                     v2 = REQUEST[r2].destination
-                    A[vI.name,R_d[p][r2].name,p] = __ARC__(TRIP[v1,v2].distance,fuelconsumption[v1,v2,p],int(v1==v2),-REQUEST[r].passengers,
+                    A[vI.name,R_d[p][r2].name,p] = __ARC__(TRIP[v1,v2].distance,fuelconsumption[v1,v2,p],int(v1!=v2),-REQUEST[r].passengers,
                          turnover_travel_timesteps[v1,v2,p],v1,v2,-REQUEST[r].weight)
                     vI.predecessors.append(R_d[p][r2].name)#TODO: condition on time windows
             for r2 in R_s[p]:
@@ -741,7 +750,7 @@ for instanceName,directory in directories.iteritems():
                     vI.successors.append(R_s[p][r2].name)#TODO: condition on time windows
                     v1 = REQUEST[r].destination
                     v2 = REQUEST[r2].origin
-                    A[vI.name,R_s[p][r2].name,p] = __ARC__(TRIP[v1,v2].distance,fuelconsumption[v1,v2,p],int(v1==v2),-REQUEST[r].passengers,
+                    A[vI.name,R_s[p][r2].name,p] = __ARC__(TRIP[v1,v2].distance,fuelconsumption[v1,v2,p],int(v1!=v2),-REQUEST[r].passengers,
                          turnover_travel_timesteps[v1,v2,p],v1,v2,-REQUEST[r].weight)
                 vI.predecessors.append(R_s[p][r2].name)#TODO: condition on time windows
             for f in F[p]:
@@ -750,11 +759,11 @@ for instanceName,directory in directories.iteritems():
                 if v1 != v2:
                     vI.successors.append(F[p][f].name)
                     vI.predecessors.append(F[p][f].name) 
-                    A[vI.name,F[p][f].name,p] = __ARC__(TRIP[v1,v2].distance,fuelconsumption[v1,v2,p],int(v1==v2),-REQUEST[r].passengers,
+                    A[vI.name,F[p][f].name,p] = __ARC__(TRIP[v1,v2].distance,fuelconsumption[v1,v2,p],int(v1!=v2),-REQUEST[r].passengers,
                              turnover_travel_timesteps[v1,v2,p],v1,v2,-REQUEST[r].weight)
                     v2 = REQUEST[r].destination
                     v1 = f[0]
-                    A[F[p][f].name,vI.name,p] = __ARC__(TRIP[v1,v2].distance,fuelconsumption[v1,v2,p],int(v1==v2),0,
+                    A[F[p][f].name,vI.name,p] = __ARC__(TRIP[v1,v2].distance,fuelconsumption[v1,v2,p],int(v1!=v2),0,
                              turnover_travel_timesteps[v1,v2,p],v1,v2,0.0)
     
     for p in F:
@@ -777,7 +786,7 @@ for instanceName,directory in directories.iteritems():
                     vI.successors.append(F[p][f2].name)
                     v1 = f[0]
                     v2 = f2[0]
-                    A[F[p][f].name,F[p][f2].name,p] =  __ARC__(TRIP[v1,v2].distance,fuelconsumption[v1,v2,p],int(v1==v2),0,
+                    A[F[p][f].name,F[p][f2].name,p] =  __ARC__(TRIP[v1,v2].distance,fuelconsumption[v1,v2,p],int(v1!=v2),0,
                          turnover_travel_timesteps[v1,v2,p],v1,v2,0.0)
                     vI.predecessors.append(F[p][f2].name)
     
@@ -808,8 +817,12 @@ for instanceName,directory in directories.iteritems():
           j = tup[1]
           p = tup[2]
           y[i,j,p] = "y#" + i + "_" + j + '_' + p
+          if aI.origin != aI.destination:
+              ub=0.0
+          else:
+              ub=1.0
           model.variables.add(obj = [travelcost[aI.origin,aI.destination,p]], names = [y[i,j,p]]
-          , lb = [0], types = ["B"])
+          , lb = [0],ub = [ub], types = ["B"])
           number_of_variables += 1
     
     for v,vI in V.iteritems():
@@ -829,7 +842,7 @@ for instanceName,directory in directories.iteritems():
           number_of_variables += 1
           
           stops[v] = "st#" + v
-          model.variables.add(obj = [0], names = [stops[v]]
+          model.variables.add(obj = [0.0], names = [stops[v]]
           , lb = [0], types = ["C"])
           number_of_variables += 1
           
@@ -850,7 +863,16 @@ for instanceName,directory in directories.iteritems():
     
     for p in PLANE:
         for r,vI in R_d[p].iteritems():
-            model.variables.set_upper_bounds([(t[vI.name],max(REQUEST_TIMESTEP[r]))])
+            model.variables.set_upper_bounds([(t[vI.name],latest_arrival_timesteps[r])])
+    
+    
+    
+    for p in PLANE:
+        for r,vI in R_s[p].iteritems():
+            model.variables.set_lower_bounds([(t[vI.name],earliest_departure_timesteps[r]-max_turnover_timesteps[r])])
+    
+    
+    
     
     for v,vI in P_s.iteritems():
         model.variables.set_lower_bounds([(seatNum[vI.name],0.0)])
@@ -906,7 +928,7 @@ for instanceName,directory in directories.iteritems():
     for r in REQUEST:
         thevars = [y[pred,R_s[p2][r].name,p2] for p2 in PLANE for pred in R_s[p2][r].predecessors]
         thecoefs = [1.0]*len(thevars)
-        model.linear_constraints.add(names = ["mustserve_" + p + "_" + r], 
+        model.linear_constraints.add(names = ["mustserve_" + r], 
                                                        lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [1.0])
     
     for r in REQUEST:
@@ -960,7 +982,6 @@ for instanceName,directory in directories.iteritems():
                                                            lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["E"], rhs = [0.0])    
     
     
-    
     #set values at vertices
     maxstops=30
     maxdists=30000
@@ -978,6 +999,7 @@ for instanceName,directory in directories.iteritems():
             rhs = -1+maxstops
             model.linear_constraints.add(names = ["stops2at_" + v + "_" + pred], 
                                                            lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [rhs])
+            
             thevars = [t[pred],t[v],y[pred,v,vI.p]]
             thecoefs = [1.0,-1.0,2*vI.arrival_time]
             rhs = -A[pred,v,vI.p].traveltime+2*vI.arrival_time
@@ -985,21 +1007,27 @@ for instanceName,directory in directories.iteritems():
                                                            lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [rhs])
             
             thevars = [seatNum[pred],seatNum[v],y[pred,v,vI.p]]
-            thecoefs = [1.0,-1.0,2*PLANE[vI.p].seats]
-            rhs = -A[pred,v,vI.p].seats+2*PLANE[vI.p].seats
-            model.linear_constraints.add(names = ["seatsat_" + v + "_" + pred], 
+            thecoefs = [1.0,-1.0,2*max([PLANE[p].seats for p in PLANE])]
+            rhs = -A[pred,v,vI.p].seats+2*max([PLANE[p].seats for p in PLANE])
+            model.linear_constraints.add(names = ["seatsmin_" + v + "_" + pred], 
                                                            lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [rhs])
             thevars = [seatNum[pred],seatNum[v],y[pred,v,vI.p]]
-            thecoefs = [1.0,-1.0,-2*PLANE[vI.p].seats]
-            rhs = -A[pred,v,vI.p].seats-2*PLANE[vI.p].seats
-            model.linear_constraints.add(names = ["seatsat_" + v + "_" + pred], 
+            thecoefs = [1.0,-1.0,-2*max([PLANE[p].seats for p in PLANE])]
+            rhs = -A[pred,v,vI.p].seats-2*max([PLANE[p].seats for p in PLANE])
+            model.linear_constraints.add(names = ["seatsmax_" + v + "_" + pred], 
                                                            lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["G"], rhs = [rhs])
+            
             thevars = [w[pred],w[v],y[pred,v,vI.p]]
             thecoefs = [1.0,-1.0,4*max(max_landing_payload.values())]
             rhs = -A[pred,v,vI.p].weight+4*max(max_landing_payload.values())
             model.linear_constraints.add(names = ["weightat_" + v + "_" + pred], 
                                                            lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [rhs])
             
+            thevars = [w[pred],w[v],y[pred,v,vI.p]]
+            thecoefs = [1.0,-1.0,-4*max(max_landing_payload.values())]
+            rhs = -A[pred,v,vI.p].weight-4*max(max_landing_payload.values())
+            model.linear_constraints.add(names = ["weightat_" + v + "_" + pred], 
+                                                           lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["G"], rhs = [rhs])
             thevars = [dist[pred],dist[v],y[pred,v,vI.p]]
             thecoefs = [1.0,-1.0,maxdists]
             rhs = -A[pred,v,vI.p].stops+maxdists
@@ -1024,21 +1052,27 @@ for instanceName,directory in directories.iteritems():
                 rhs = PLANE[p].max_fuel - PLANE[p].reserve_fuel
                 model.linear_constraints.add(names = ["fuelmaxat_" + v + "_" + pred], 
                                                                lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [rhs])
-            
+               
+                
+    
+      
     #max_weight
     for v,vI in V.iteritems():
         for pred in vI.predecessors:
-            thevars = [fuel[v],w[v],y[pred,v,vI.p]]
-            thecoefs = [1.0,1.0,A[pred,v,vI.p].fuel]
-            rhs = max_takeoff_payload[A[pred,v,vI.p].origin,vI.p]
+            thevars = [fuel[pred],w[pred],y[pred,v,vI.p]]
+            
+            thecoefs = [1.0,1.0,A[pred,v,vI.p].weight]
+            rhs = max_trip_payload[A[pred,v,vI.p].origin,A[pred,v,vI.p].destination,vI.p]#+A[pred,v,vI.p].fuel
+            #rhs = max_takeoff_payload[A[pred,v,vI.p].origin,vI.p]
             model.linear_constraints.add(names = ["maxweighttakeoff_" + v + "_" + pred], 
                                                            lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [rhs])
+    
+    
     for v,vI in V.iteritems():
-        for pred in vI.predecessors:
-            thevars = [fuel[v],w[v]]
-            thecoefs = [1.0,1.0]
-            rhs = max_landing_payload[A[pred,v,vI.p].destination,vI.p]
-            model.linear_constraints.add(names = ["maxweightlanding_" + v + "_" + pred], 
+        thevars = [fuel[v],w[v]]
+        thecoefs = [1.0,1.0]
+        rhs = max_landing_payload[vI.airport,vI.p]
+        model.linear_constraints.add(names = ["maxweightlanding_" + v + "_" + pred], 
                                                            lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [rhs])
     
             
@@ -1051,16 +1085,29 @@ for instanceName,directory in directories.iteritems():
             rhs = (1 + REQUEST[r].max_detour) * TRIP0[REQUEST[r].request_departure,REQUEST[r].request_arrival].distance
             model.linear_constraints.add(names = ["maxdetour_" + p + "_" + r], 
                                                            lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [rhs])
-            
+           
     #max_stops
     for p in PLANE:
         for r in REQUEST:
             thevars = [stops[R_s[p][r].name],stops[R_d[p][r].name]]
             thecoefs = [-1.0,1.0]
-            rhs = REQUEST[r].max_stops
-            model.linear_constraints.add(names = ["maxdetour_" + p + "_" + r], 
+            rhs = REQUEST[r].max_stops+1
+            model.linear_constraints.add(names = ["maxstops_" + p + "_" + r], 
                                                            lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [rhs])
-        
+       
+    #max_fuel
+    for v,vI in V.iteritems():
+        for pred in vI.predecessors:
+            thevars = [fuel[pred],y[pred,v,vI.p]]
+            thecoefs = [1.0,A[pred,v,vI.p].fuel]
+            rhs = max_trip_fuel[A[pred,v,vI.p].origin,A[pred,v,vI.p].destination,vI.p]#A[pred,v,vI.p].fuel
+            model.linear_constraints.add(names = ["maxtripfuel_" + v + "_" + pred], 
+                                                           lin_expr = [cplex.SparsePair(thevars,thecoefs)], senses = ["L"], rhs = [rhs])
+    
+    for p,i,j in TIMEFREEPLANESOLUTION:
+        for a,aI in A.iteritems():
+            if a[2]==p and aI.origin == i and aI.destination == j:
+                model.variables.set_upper_bounds([(y[a[0],a[1],a[2]],1.0)])
     
     # set time limit
     model.parameters.timelimit.set(10800) # 10800 = 3h, 86400 = one day (24h)
@@ -1077,14 +1124,21 @@ for instanceName,directory in directories.iteritems():
     solution=model.solution
     if solution.is_primal_feasible():
         print "Solution value = ", solution.get_objective_value()
+    for a,aI in A.iteritems():
+        model.variables.set_upper_bounds([(y[a[0],a[1],a[2]],1.0)])
+    
+    model.solve()
+    solution=model.solution
+    if solution.is_primal_feasible():
+        print "Solution value = ", solution.get_objective_value()
         if printy:
             solutionValues=model.solution.get_values()
             idx2name = { j : n for j, n in enumerate(model.variables.get_names()) }
             name2idx = { n : j for j, n in enumerate(model.variables.get_names()) }
             name2solutionValue = { n : solutionValues[j] for j, n in enumerate(model.variables.get_names()) }
-            for key,val in y.iteritems():
+            for key,val in seatNum.iteritems():
                 valStore=solutionValues[name2idx[val]]
-                if valStore > 0.5:
+                if valStore > 0.5 or valStore < -0.5:
                     print(val+" %f" %valStore)
     else:
         print "No solution available."
