@@ -118,7 +118,7 @@ class CountNodesCallback(MIPInfoCallback):
     self.mip_gap = self.get_MIP_relative_gap()
     
     return
-    
+
 class breakIncumbentCallback(IncumbentCallback):
   def __call__(self):
     global TIMEFREEPLANESOLUTION
@@ -457,7 +457,7 @@ for instanceName,directory in directories.iteritems():
         TRIP = {}
         
         for line in entries:
-          if comment_line.search(line) == None:
+          if comment_line.search(line) == None:var
             datas = re.split("\s+", line)
             if len(datas) == 3:
               origin, destination, distance = datas
